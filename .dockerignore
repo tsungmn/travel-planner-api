@@ -1,0 +1,11 @@
+.env
+.env.*
+data/
+backups/
+db/
+scripts/
+.git
+.gitignore
+__pycache__/
+*.pyc
+.venv/
