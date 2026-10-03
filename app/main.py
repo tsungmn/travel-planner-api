@@ -7,6 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import db
 from .config import settings
+from .providers import geoapify, nominatim
 from .routers import auth, flights, lodgings, places, stops, trips
 
 
@@ -15,7 +16,8 @@ async def lifespan(_: FastAPI):
     await db.init_pool()
     await db.get_pool().execute("delete from sessions where expires_at < now()")  # 만료 세션 정리
     yield
-    await places.http_client.aclose()
+    await geoapify.close()
+    await nominatim.close()
     await db.close_pool()
 
 

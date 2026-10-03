@@ -19,11 +19,11 @@ async def create_lodging(body: LodgingCreate, trip=Depends(require_trip)):
     if n >= MAX_LODGINGS_PER_TRIP:
         raise HTTPException(409, "too_many_lodgings")
     row = await pool.fetchrow(
-        """insert into lodgings (trip_id, name, address_text, lat, lng, place_id, source,
+        """insert into lodgings (trip_id, name, address_text, lat, lng, provider, provider_place_id,
                                  check_in, check_out, memo)
            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning *""",
-        trip["id"], body.name, body.address_text, body.lat, body.lng, body.place_id,
-        body.source, body.check_in, body.check_out, body.memo,
+        trip["id"], body.name, body.address_text, body.lat, body.lng,
+        body.provider, body.provider_place_id, body.check_in, body.check_out, body.memo,
     )
     return dict(row)
 

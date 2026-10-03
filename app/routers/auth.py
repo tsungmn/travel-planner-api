@@ -67,8 +67,9 @@ async def register(body: Register, response: Response):
         )
     except asyncpg.UniqueViolationError:
         raise HTTPException(409, "email_taken")
-    set_session_cookie(response, await create_session(user_id))
-    return {"id": str(user_id), "email": email, "name": body.name}
+    token = await create_session(user_id)
+    set_session_cookie(response, token)
+    return {"id": str(user_id), "email": email, "name": body.name, "token": token}
 
 
 @router.post("/login")
@@ -84,8 +85,9 @@ async def login(body: Login, response: Response):
     )
     if not (has_pw and verified):
         raise HTTPException(401, "invalid_credentials")
-    set_session_cookie(response, await create_session(row["id"]))
-    return {"id": str(row["id"]), "email": row["email"], "name": row["name"]}
+    token = await create_session(row["id"])
+    set_session_cookie(response, token)
+    return {"id": str(row["id"]), "email": row["email"], "name": row["name"], "token": token}
 
 
 @router.post("/logout", status_code=204)
