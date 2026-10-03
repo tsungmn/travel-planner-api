@@ -8,7 +8,8 @@ from pydantic import AfterValidator, BaseModel, Field, NaiveDatetime, model_vali
 
 Lat = Annotated[float, Field(ge=-90, le=90)]
 Lng = Annotated[float, Field(ge=-180, le=180)]
-PlaceId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{10,300}$")]
+ProviderPlaceId = Annotated[str, Field(min_length=1, max_length=200)]
+Provider = Literal["geoapify", "nominatim", "manual"]
 
 
 def _flight_no(v: str) -> str:
@@ -100,8 +101,17 @@ class StopCreate(BaseModel):
     address_text: str | None = Field(default=None, max_length=300)
     lat: Lat
     lng: Lng
-    place_id: PlaceId | None = None
+    provider: Provider = "manual"
+    provider_place_id: ProviderPlaceId | None = None
     memo: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def _provider(self) -> Self:
+        if self.provider == "manual":
+            self.provider_place_id = None
+        elif not self.provider_place_id:
+            raise ValueError("provider_place_id is required unless provider is manual")
+        return self
 
 
 class StopUpdate(BaseModel):
@@ -128,7 +138,8 @@ class StopOut(BaseModel):
     address_text: str | None
     lat: float
     lng: float
-    place_id: str | None
+    provider: str
+    provider_place_id: str | None
     memo: str | None
 
 
@@ -177,16 +188,18 @@ class LodgingCreate(BaseModel):
     address_text: str | None = Field(default=None, max_length=300)
     lat: Lat
     lng: Lng
-    place_id: PlaceId | None = None
-    source: Literal["google", "manual"] = "manual"
+    provider: Provider = "manual"
+    provider_place_id: ProviderPlaceId | None = None
     check_in: date | None = None
     check_out: date | None = None
     memo: str | None = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")
     def _check(self) -> Self:
-        if self.source == "google" and not self.place_id:
-            raise ValueError("place_id is required when source is google")
+        if self.provider == "manual":
+            self.provider_place_id = None
+        elif not self.provider_place_id:
+            raise ValueError("provider_place_id is required unless provider is manual")
         if self.check_in and self.check_out and self.check_out < self.check_in:
             raise ValueError("check_out must be on or after check_in")
         return self
@@ -197,22 +210,24 @@ class LodgingUpdate(BaseModel):
     address_text: str | None = Field(default=None, max_length=300)
     lat: Lat | None = None
     lng: Lng | None = None
-    place_id: PlaceId | None = None
-    source: Literal["google", "manual"] | None = None
+    provider: Provider | None = None
+    provider_place_id: ProviderPlaceId | None = None
     check_in: date | None = None
     check_out: date | None = None
     memo: str | None = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")
     def _check(self) -> Self:
-        if self.source == "google" and not self.place_id:
-            raise ValueError("place_id is required when source is google")
+        if self.provider == "manual":
+            self.provider_place_id = None      # 대입하면 '전달된 필드'로 취급되어 DB 값도 null 로 갱신됨
+        elif self.provider is not None and not self.provider_place_id:
+            raise ValueError("provider_place_id is required unless provider is manual")
         if self.check_in and self.check_out and self.check_out < self.check_in:
             raise ValueError("check_out must be on or after check_in")
         return self
 
 
-LODGING_NULLABLE = {"address_text", "place_id", "check_in", "check_out", "memo"}
+LODGING_NULLABLE = {"address_text", "provider_place_id", "check_in", "check_out", "memo"}
 
 
 class LodgingOut(BaseModel):

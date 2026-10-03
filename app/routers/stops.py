@@ -24,13 +24,14 @@ async def create_stop(body: StopCreate, trip=Depends(require_trip)):
     if n >= MAX_STOPS_PER_TRIP:
         raise HTTPException(409, "too_many_stops")
     row = await pool.fetchrow(
-        """insert into stops (trip_id, day_index, sort_order, name, address_text, lat, lng, place_id, memo)
+        """insert into stops (trip_id, day_index, sort_order, name, address_text, lat, lng,
+                              provider, provider_place_id, memo)
            values ($1, $2,
                    (select coalesce(max(sort_order), -1) + 1 from stops where trip_id = $1 and day_index = $2),
-                   $3, $4, $5, $6, $7, $8)
+                   $3, $4, $5, $6, $7, $8, $9)
            returning *""",
         trip["id"], body.day_index, body.name, body.address_text,
-        body.lat, body.lng, body.place_id, body.memo,
+        body.lat, body.lng, body.provider, body.provider_place_id, body.memo,
     )
     return dict(row)
 
