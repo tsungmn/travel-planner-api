@@ -2,7 +2,6 @@
 .env.*
 data/
 backups/
-db/
 scripts/
 .git
 .gitignore

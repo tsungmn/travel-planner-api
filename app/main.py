@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+import logging
 from . import db
 from .config import settings
 from .providers import geoapify, nominatim
@@ -52,7 +53,20 @@ app.include_router(flights.router)
 app.include_router(lodgings.router)
 
 
-@app.get("/api/health")
-async def health():
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+@app.get("/api/healthz")    # liveness: DB 없이 프로세스만 확인
+async def healthz():
+    return {"ok": True}
+
+
+@app.get("/api/readyz")     # readiness: DB 연결 확인
+async def readyz():
     await db.get_pool().fetchval("select 1")
     return {"ok": True}
+
+
+@app.get("/api/health")     # 기존 경로 호환
+async def health():
+    return await readyz()
