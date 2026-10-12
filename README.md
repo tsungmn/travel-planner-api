@@ -14,7 +14,7 @@
 
 | 구분 | 사용 기술 |
 | --- | --- |
-| 언어 / 프레임워크 | Python 3.12, FastAPI, Uvicorn |
+| 언어 | 프레임워크 | Python 3.12, FastAPI, Uvicorn |
 | 데이터베이스 | PostgreSQL 17 (asyncpg, 순수 SQL 마이그레이션) |
 | 인증 | 서버 세션(토큰은 SHA-256 해시로 저장), Argon2 비밀번호 해시, Google OAuth (Authlib) |
 | 장소 검색 | Geoapify Geocoding Autocomplete, OpenStreetMap Nominatim |
@@ -144,19 +144,6 @@ Google Cloud는 로그인에만 사용하며 Places API 등 결제가 필요한 
 | 장소 검색 (사용자당 하루, `suggest`와 `full` 합산) | 500 | `429 rate_limited` |
 
 검색 한도는 DB의 `current_date` 기준으로 초기화됩니다. DB 서버의 시간대가 기본값(UTC)이면 UTC 자정에 초기화됩니다.
-
-### 입력 규칙
-
-- 일차(`day_index`)는 0부터 시작하며 여행 일수 범위 안이어야 합니다.
-- 기간을 줄이는 수정에서 범위 밖 일차에 장소가 남아 있으면 `409 stops_out_of_range`로 거부합니다.
-- 장소 별칭(`alias`)은 최대 50자이며, 공백뿐이면 없음(null)으로 저장합니다. 메모는 최대 1,000자입니다.
-- 장소·숙소의 `provider`는 `geoapify`, `nominatim`, `manual` 중 하나입니다. `manual`이 아니면 `provider_place_id`가 필요하고, `manual`이면 null로 저장합니다. 검색 결과 항목은 장소·숙소 추가 요청 본문과 필드명이 같아 그대로 전달할 수 있습니다.
-- 항공편명은 공백을 제거하고 대문자로 정규화합니다. (`mu 2040` → `MU2040`) 공항 코드는 IATA 3글자, 시간대는 IANA 이름(예: `Asia/Seoul`)이어야 합니다.
-- 항공편 시각은 시간대 없는 현지 시각(`dep_local`, `arr_local`)과 `dep_tz`, `arr_tz`를 함께 저장합니다.
-- 숙소의 체크아웃은 체크인 이후여야 합니다.
-- PATCH는 전달된 필드만 수정합니다. null을 허용하지 않는 필드에 null을 보내면 422(`<필드>_cannot_be_null`), 빈 본문은 422(`no_fields`)입니다.
-- 다른 사용자의 여행에 접근하면 존재 여부를 알리지 않기 위해 404를 반환합니다.
-- 공유 토큰은 UUID 2개를 이어 만든 무작위 값입니다. 이미 공유 중인 여행에 다시 켜면 기존 토큰을 그대로 돌려주고, 끄면 토큰이 삭제됩니다. 공유 조회 응답에는 소유자 정보와 토큰이 포함되지 않습니다.
 
 ### 오류 응답
 
