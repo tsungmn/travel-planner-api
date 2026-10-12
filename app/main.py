@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 import asyncpg
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -43,6 +44,14 @@ app.add_middleware(
 @app.exception_handler(asyncpg.CheckViolationError)
 async def check_violation_handler(_: Request, __: asyncpg.CheckViolationError):
     return JSONResponse({"detail": "constraint_violation"}, status_code=422)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(_: Request, exc: RequestValidationError):
+    # 기본 응답은 detail 이 객체 배열이라 프론트가 원인을 코드로 구분할 수 없다.
+    # 다른 422 와 같은 모양(detail = 코드 문자열)으로 맞추고, 문제 필드 위치만 덧붙인다. (예: "body.name")
+    fields = [".".join(str(p) for p in e["loc"]) for e in exc.errors()]
+    return JSONResponse({"detail": "validation_error", "fields": fields}, status_code=422)
 
 
 app.include_router(auth.router)

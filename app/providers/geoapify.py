@@ -1,3 +1,5 @@
+import hashlib
+
 import httpx
 
 from ..config import settings
@@ -7,11 +9,23 @@ PROVIDER = "geoapify"
 ATTRIBUTION = "Powered by Geoapify · © OpenStreetMap contributors"
 URL = "https://api.geoapify.com/v1/geocode/autocomplete"
 
+MAX_PLACE_ID_LEN = 200   # schemas.ProviderPlaceId 의 max_length 와 같아야 한다
+
 client = httpx.AsyncClient(timeout=8)   # main.py 의 lifespan 에서 종료
 
 
 async def close() -> None:
     await client.aclose()
+
+
+def _place_id(raw: object) -> str:
+    """Geoapify place_id 는 장소 이름까지 인코딩해서 이름이 긴 장소는 상한을 넘는다.
+    넘으면 해시로 줄인다. 같은 장소는 항상 같은 값이라 중복 확인에는 그대로 쓸 수 있고,
+    이 값으로 Geoapify 에 다시 조회하는 곳은 없다."""
+    pid = str(raw)
+    if len(pid) <= MAX_PLACE_ID_LEN:
+        return pid
+    return "sha256:" + hashlib.sha256(pid.encode()).hexdigest()
 
 
 async def suggest(
@@ -45,10 +59,12 @@ async def suggest(
         if plon is None or plat is None or not pid:
             continue
         formatted = pr.get("formatted") or ""
-        name = pr.get("name") or pr.get("address_line1") or formatted
+        name = (pr.get("name") or "").strip() or (pr.get("address_line1") or "").strip() or formatted.strip()
+        if not name:
+            continue    # 이름이 비면 장소 추가 시 422 (name 최소 1자) 가 되므로 결과에서 뺀다
         items.append({
             "provider": PROVIDER,
-            "provider_place_id": str(pid),
+            "provider_place_id": _place_id(pid),
             "name": name[:100],
             "address_text": formatted[:300] or None,
             "lat": plat,

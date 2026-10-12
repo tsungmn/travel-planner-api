@@ -4,7 +4,9 @@ from typing import Annotated, Literal, Self
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from pydantic import AfterValidator, BaseModel, Field, NaiveDatetime, model_validator
+from pydantic import (
+    AfterValidator, BaseModel, Field, NaiveDatetime, field_validator, model_validator,
+)
 
 Lat = Annotated[float, Field(ge=-90, le=90)]
 Lng = Annotated[float, Field(ge=-180, le=180)]
@@ -95,15 +97,25 @@ class TripPublic(BaseModel):
 
 
 # ===== Stop =====
+def _blank_to_none(v: str | None) -> str | None:
+    """공백뿐인 별칭은 '없음'으로 본다."""
+    if v is None:
+        return None
+    return v.strip() or None
+
+
 class StopCreate(BaseModel):
     day_index: int = Field(ge=0, le=60)
     name: str = Field(min_length=1, max_length=100)
+    alias: str | None = Field(default=None, max_length=50)
     address_text: str | None = Field(default=None, max_length=300)
     lat: Lat
     lng: Lng
     provider: Provider = "manual"
     provider_place_id: ProviderPlaceId | None = None
     memo: str | None = Field(default=None, max_length=1000)
+
+    _alias = field_validator("alias")(_blank_to_none)
 
     @model_validator(mode="after")
     def _provider(self) -> Self:
@@ -116,11 +128,15 @@ class StopCreate(BaseModel):
 
 class StopUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
+    alias: str | None = Field(default=None, max_length=50)
     address_text: str | None = Field(default=None, max_length=300)
     memo: str | None = Field(default=None, max_length=1000)
 
 
-STOP_NULLABLE = {"address_text", "memo"}
+    _alias = field_validator("alias")(_blank_to_none)
+
+
+STOP_NULLABLE = {"alias", "address_text", "memo"}
 
 
 class StopOrder(BaseModel):
@@ -135,6 +151,7 @@ class StopOut(BaseModel):
     day_index: int
     sort_order: int
     name: str
+    alias: str | None
     address_text: str | None
     lat: float
     lng: float
@@ -237,8 +254,8 @@ class LodgingOut(BaseModel):
     address_text: str | None
     lat: float
     lng: float
-    place_id: str | None
-    source: str
+    provider: str
+    provider_place_id: str | None
     check_in: date | None
     check_out: date | None
     memo: str | None
