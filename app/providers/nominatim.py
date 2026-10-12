@@ -63,7 +63,9 @@ async def search(
         if not osm_type or osm_id is None:
             continue
         display = x.get("display_name") or ""
-        name = x.get("name") or display.split(",")[0].strip()
+        name = (x.get("name") or "").strip() or display.split(",")[0].strip()
+        if not name:
+            continue    # 이름이 비면 장소 추가 시 422 (name 최소 1자) 가 되므로 결과에서 뺀다
         items.append({
             "provider": PROVIDER,
             "provider_place_id": f"{osm_type}/{osm_id}",
