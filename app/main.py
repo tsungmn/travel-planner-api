@@ -10,7 +10,7 @@ import logging
 from . import db
 from .config import settings
 from .providers import geoapify, nominatim
-from .routers import auth, flights, lodgings, places, stops, trips
+from .routers import areas, auth, flights, lodgings, places, stops, trips
 
 
 @asynccontextmanager
@@ -60,6 +60,7 @@ app.include_router(trips.router)
 app.include_router(stops.router)
 app.include_router(flights.router)
 app.include_router(lodgings.router)
+app.include_router(areas.router)
 
 
 logging.getLogger("httpx").setLevel(logging.WARNING)

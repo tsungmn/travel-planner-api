@@ -16,15 +16,20 @@ MAX_TRIPS_PER_USER = 30
 
 async def _load_children(trip_id):
     pool = get_pool()
-    flights, lodgings, stops = await asyncio.gather(
+    flights, lodgings, stops, areas = await asyncio.gather(
         pool.fetch("select * from flights where trip_id = $1 order by dep_local nulls last", trip_id),
         pool.fetch("select * from lodgings where trip_id = $1 order by check_in nulls last", trip_id),
         pool.fetch("select * from stops where trip_id = $1 order by day_index, sort_order", trip_id),
+        pool.fetch(
+            "select * from trip_areas where trip_id = $1 order by day_index nulls last, created_at",
+            trip_id,
+        ),
     )
     return (
         [dict(r) for r in flights],
         [dict(r) for r in lodgings],
         [dict(r) for r in stops],
+        [dict(r) for r in areas],
     )
 
 
@@ -57,8 +62,8 @@ async def create_trip(body: TripCreate, user: dict = Depends(current_user)):
 
 @router.get("/trips/{trip_id}", response_model=TripDetail)
 async def get_trip(trip=Depends(require_trip)):
-    flights, lodgings, stops = await _load_children(trip["id"])
-    return {**dict(trip), "flights": flights, "lodgings": lodgings, "stops": stops}
+    flights, lodgings, stops, areas = await _load_children(trip["id"])
+    return {**dict(trip), "flights": flights, "lodgings": lodgings, "stops": stops, "areas": areas}
 
 
 @router.patch("/trips/{trip_id}", response_model=TripOut)
@@ -81,7 +86,14 @@ async def update_trip(body: TripUpdate, trip=Depends(require_trip)):
         raise HTTPException(409, "stops_out_of_range")
 
     sql, args = update_sql("trips", fields, {"id": trip["id"]})
-    row = await pool.fetchrow(sql, *args)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(sql, *args)
+            # 영역은 러프 스케치라 장소처럼 거부하지 않고, 범위를 벗어난 영역은 '일차 미지정'으로 돌린다.
+            await conn.execute(
+                "update trip_areas set day_index = null where trip_id = $1 and day_index >= $2",
+                trip["id"], new_days,
+            )
     return dict(row)
 
 
@@ -122,5 +134,7 @@ async def get_shared(token: str):
     )
     if not trip:
         raise HTTPException(404, "not_found")
-    flights, lodgings, stops = await _load_children(trip["id"])
-    return {"trip": dict(trip), "flights": flights, "lodgings": lodgings, "stops": stops}
+    flights, lodgings, stops, areas = await _load_children(trip["id"])
+    return {
+        "trip": dict(trip), "flights": flights, "lodgings": lodgings, "stops": stops, "areas": areas,
+    }

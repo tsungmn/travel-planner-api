@@ -261,11 +261,63 @@ class LodgingOut(BaseModel):
     memo: str | None
 
 
+# ===== Area (러프 계획 영역) =====
+AREA_MIN_RADIUS_M = 100
+AREA_MAX_RADIUS_M = 5000
+
+
+def _strip(v: str) -> str:
+    return v.strip()
+
+
+def _strip_or_none(v: str | None) -> str | None:
+    return v.strip() if v is not None else None
+
+
+class AreaCreate(BaseModel):
+    day_index: int | None = Field(default=None, ge=0, le=60)   # None = 일차 미지정
+    label: str = Field(default="", max_length=30)
+    lat: Lat
+    lng: Lng
+    radius_m: int = Field(default=800, ge=AREA_MIN_RADIUS_M, le=AREA_MAX_RADIUS_M)
+    memo: str | None = Field(default=None, max_length=500)
+
+    _label = field_validator("label")(_strip)
+    _memo = field_validator("memo")(_blank_to_none)
+
+
+class AreaUpdate(BaseModel):
+    day_index: int | None = Field(default=None, ge=0, le=60)
+    label: str | None = Field(default=None, max_length=30)
+    lat: Lat | None = None
+    lng: Lng | None = None
+    radius_m: int | None = Field(default=None, ge=AREA_MIN_RADIUS_M, le=AREA_MAX_RADIUS_M)
+    memo: str | None = Field(default=None, max_length=500)
+
+    _label = field_validator("label")(_strip_or_none)
+    _memo = field_validator("memo")(_blank_to_none)
+
+
+AREA_NULLABLE = {"day_index", "memo"}
+
+
+class AreaOut(BaseModel):
+    id: UUID
+    trip_id: UUID
+    day_index: int | None
+    label: str
+    lat: float
+    lng: float
+    radius_m: int
+    memo: str | None
+
+
 # ===== 조합 =====
 class TripDetail(TripOut):
     flights: list[FlightOut]
     lodgings: list[LodgingOut]
     stops: list[StopOut]
+    areas: list[AreaOut]
 
 
 class SharedTripOut(BaseModel):
@@ -273,3 +325,4 @@ class SharedTripOut(BaseModel):
     flights: list[FlightOut]
     lodgings: list[LodgingOut]
     stops: list[StopOut]
+    areas: list[AreaOut]

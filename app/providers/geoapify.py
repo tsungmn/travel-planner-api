@@ -35,12 +35,18 @@ async def suggest(
     lng: float | None,
     radius_m: int | None,
     limit: int = 8,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> list[dict]:
-    """입력 중 제안. lat/lng 가 있으면 가까운 결과를 우선하고, radius_m 이 있으면 그 반경 안으로 제한한다."""
+    """입력 중 제안. lat/lng 가 있으면 가까운 결과를 우선하고, radius_m 이 있으면 그 반경 안으로 제한한다.
+    bbox(west, south, east, north)가 있으면 lat/lng/radius_m 대신 그 사각형 안으로 제한한다."""
     params: dict[str, str | int] = {"text": q, "limit": limit, "apiKey": settings.geoapify_api_key}
     if lang:
         params["lang"] = lang
-    if lat is not None and lng is not None:
+    if bbox:
+        west, south, east, north = bbox
+        params["filter"] = f"rect:{west:.6f},{south:.6f},{east:.6f},{north:.6f}"   # lon1,lat1,lon2,lat2
+        params["bias"] = f"proximity:{(west + east) / 2:.6f},{(south + north) / 2:.6f}"
+    elif lat is not None and lng is not None:
         params["bias"] = f"proximity:{lng},{lat}"                    # lon,lat 순서
         if radius_m:
             params["filter"] = f"circle:{lng},{lat},{radius_m}"

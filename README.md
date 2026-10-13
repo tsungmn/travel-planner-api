@@ -34,7 +34,6 @@
 
 - Docker, Docker Compose v2
 - Python 3.12
-- Bash (`scripts/*.sh` 실행용. Windows에서는 Git Bash 또는 WSL)
 
 ### 실행
 
@@ -42,11 +41,11 @@
 cp .env.example .env            # 값 입력 (아래 "환경 변수" 참고)
 
 docker compose up -d db         # PostgreSQL 실행
-scripts/migrate.sh              # 마이그레이션 적용
 
 python -m venv .venv
 source .venv/bin/activate       # Windows PowerShell: .venv\Scripts\activate
 pip install -r requirements.txt
+python -m app.migrate           # 마이그레이션 적용
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -124,6 +123,8 @@ Google Cloud는 로그인에만 사용하며 Places API 등 결제가 필요한 
 | 장소 | POST | `/trips/{trip_id}/stops` | 일차의 맨 뒤에 추가 |
 | | PUT | `/trips/{trip_id}/stops/order` | 일차 이동과 순서 일괄 저장 |
 | | PATCH, DELETE | `/trips/{trip_id}/stops/{stop_id}` | 수정, 삭제 |
+| 영역 | POST | `/trips/{trip_id}/areas` | 러프 계획 영역(원) 추가. `day_index`가 없으면 일차 미지정 |
+| | PATCH, DELETE | `/trips/{trip_id}/areas/{area_id}` | 수정, 삭제 |
 | 항공편 | POST | `/trips/{trip_id}/flights` | 추가 |
 | | PATCH, DELETE | `/trips/{trip_id}/flights/{flight_id}` | 수정, 삭제 |
 | 숙소 | POST | `/trips/{trip_id}/lodgings` | 추가 |
@@ -140,6 +141,7 @@ Google Cloud는 로그인에만 사용하며 Places API 등 결제가 필요한 
 | 여행당 방문 장소 | 200 | `409 too_many_stops` |
 | 여행당 항공편 | 10 | `409 too_many_flights` |
 | 여행당 숙소 | 20 | `409 too_many_lodgings` |
+| 여행당 영역 | 100 | `409 too_many_areas` |
 | 순서 일괄 저장 1회 | 500건 | `422` |
 | 장소 검색 (사용자당 하루, `suggest`와 `full` 합산) | 500 | `429 rate_limited` |
 
@@ -154,7 +156,7 @@ Google Cloud는 로그인에만 사용하며 Places API 등 결제가 필요한 
 | 400 | `bad_request` |
 | 401 | `unauthorized`, `invalid_credentials` |
 | 404 | `not_found` |
-| 409 | `email_taken`, `too_many_trips`, `too_many_stops`, `too_many_flights`, `too_many_lodgings`, `stops_out_of_range` |
+| 409 | `email_taken`, `too_many_trips`, `too_many_stops`, `too_many_flights`, `too_many_lodgings`, `too_many_areas`, `stops_out_of_range` |
 | 422 | `validation_error`, `constraint_violation`, `invalid_dates`, `day_out_of_range`, `duplicate_stop`, `unknown_stop`, `no_fields`, `<필드>_cannot_be_null` |
 | 429 | `rate_limited` |
 | 502 | `upstream_error` |
@@ -213,43 +215,23 @@ PostgreSQL 17을 사용하며, 스키마는 `db/migrations/*.sql`을 파일명 �
 | `001_init.sql` | 초기 스키마: `users`, `sessions`, `trips`, `flights`, `lodgings`, `stops`, `place_usage` |
 | `002_search_provider.sql` | 장소·숙소의 검색 공급자 컬럼(`provider`, `provider_place_id`), 검색 사용량 종류 `search` 추가 |
 | `003_stop_alias.sql` | 장소의 별칭(`alias`) 컬럼 |
+| `004_trip_areas.sql` | 러프 계획 영역 `trip_areas` (일차, 라벨, 중심 좌표, 반경 100~5000m, 메모) |
 
-- 여행을 삭제하면 장소, 항공편, 숙소가 함께 삭제됩니다. 사용자를 삭제하면 세션과 여행도 삭제됩니다.
+- 여행을 삭제하면 장소, 항공편, 숙소, 영역이 함께 삭제됩니다. 여행 기간을 줄여 범위를 벗어난 영역은 삭제하지 않고 일차 미지정(`day_index = null`)으로 돌립니다. 사용자를 삭제하면 세션과 여행도 삭제됩니다.
 - 세션 토큰은 해시로만 저장하므로 DB가 유출되어도 토큰을 재사용할 수 없습니다.
 
-마이그레이션 실행 방법은 두 가지입니다.
+마이그레이션은 `python -m app.migrate`로 적용합니다. `.env`(또는 환경 변수)의 `DATABASE_URL`로 접속하고, advisory lock으로 동시 실행을 막으며, 이미 적용된 파일은 건너뜁니다.
 
 ```bash
-scripts/migrate.sh              # 호스트에서: docker compose의 db 컨테이너에 psql로 적용
-python -m app.migrate           # 앱 환경에서: DATABASE_URL로 접속해 적용 (advisory lock으로 동시 실행 방지)
+python -m app.migrate                       # 호스트(venv)에서
+docker compose run --rm api python -m app.migrate   # 컨테이너에서 (DATABASE_URL은 compose가 db 호스트로 지정)
 ```
 
 ## 스크립트
 
 | 스크립트 | 설명 |
 | --- | --- |
-| `scripts/migrate.sh` | 미적용 마이그레이션 적용 |
-| `scripts/backup.sh` | `pg_dump` 결과를 gzip으로 저장하고 오래된 백업 삭제 |
-| `scripts/restore.sh <파일>` | 백업으로 DB 복원. 현재 DB를 삭제하며, 실행 전 확인 절차가 있고 `api` 컨테이너를 중지했다가 다시 시작함 |
 | `scripts/probe_search.py <공급자>` | 장소 검색 공급자(`maptiler`, `geoapify`, `photon`, `nominatim`)별 검색 품질 비교용. 서비스 코드와 무관 |
-
-`scripts/*.sh`는 저장소 루트의 `.env`를 읽으며, `docker compose`의 `db` 서비스가 실행 중이어야 합니다.
-
-`backup.sh` 환경 변수:
-
-| 변수 | 기본값 | 설명 |
-| --- | --- | --- |
-| `BACKUP_DIR` | `~/backups/travel-planner` | 저장 경로 |
-| `KEEP_DAYS` | `14` | 보관 일수 |
-| `RCLONE_REMOTE` | 없음 | 지정하면 rclone으로 외부 저장소에도 복사 (예: `mycloud:travel-backups`) |
-
-cron 등록 예시 (매일 04:00):
-
-```bash
-0 4 * * * cd /path/to/travel-planner-api && scripts/backup.sh >> $HOME/travel-backup.log 2>&1
-```
-
-같은 서버의 디스크에만 보관하면 디스크 장애 시 함께 손실되므로 외부 저장소로의 복사를 권장합니다.
 
 ## 컨테이너와 배포
 
@@ -264,8 +246,9 @@ cron 등록 예시 (매일 04:00):
 
 ```bash
 git pull
-scripts/migrate.sh              # 미적용 마이그레이션만 적용
-docker compose up -d --build api
+docker compose build api
+docker compose run --rm api python -m app.migrate   # 미적용 마이그레이션만 적용
+docker compose up -d api
 ```
 
 ## 프로젝트 구조
@@ -281,9 +264,9 @@ app/
   schemas.py       요청·응답 모델, 입력 검증
   migrate.py       Python 마이그레이션 실행기
   providers/       장소 검색 공급자 어댑터 (geoapify, nominatim)
-  routers/         auth, places, trips, stops, flights, lodgings
+  routers/         auth, places, trips, stops, flights, lodgings, areas
 db/migrations/     SQL 마이그레이션
-scripts/           migrate / backup / restore, probe_search.py
+scripts/           probe_search.py
 Dockerfile
 docker-compose.yml  db + api (개발용)
 .env.example
@@ -291,7 +274,7 @@ docker-compose.yml  db + api (개발용)
 
 ## Windows 개발 환경 참고
 
-셸 스크립트가 CRLF로 저장되면 Linux에서 `bash\r: No such file or directory` 오류가 납니다. `.gitattributes`가 `*.sh`, `*.sql`, `*.py`, `*.yml`, `Dockerfile`을 LF로 고정합니다. 이미 CRLF로 커밋된 파일은 `git add --renormalize .`로 정리하고, 실행 권한이 없으면 `chmod +x scripts/*.sh`를 실행합니다. `.env`가 CRLF이면 스크립트가 DB 사용자명을 읽지 못하므로 `sed -i 's/\r$//' .env`로 변환합니다.
+파일이 CRLF로 저장되면 컨테이너나 Linux에서 문제가 생길 수 있어, `.gitattributes`가 `*.sql`, `*.py`, `*.yml`, `Dockerfile`을 LF로 고정합니다. 이미 CRLF로 커밋된 파일은 `git add --renormalize .`로 정리합니다.
 
 ## 보안 참고
 

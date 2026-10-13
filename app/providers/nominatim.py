@@ -28,14 +28,20 @@ async def search(
     lng: float | None,
     half_span_deg: float | None,
     limit: int = 8,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> list[dict]:
     """전체 검색. 사용자가 검색을 확정했을 때만 호출할 것 (입력 중 자동완성 용도로 쓰지 않는다).
-    lat/lng 와 half_span_deg 가 있으면 그 사각형 안으로 제한한다."""
+    lat/lng 와 half_span_deg 가 있으면 그 사각형 안으로 제한한다.
+    bbox(west, south, east, north)가 있으면 그것이 우선한다."""
     global _last
     params: dict[str, str | int] = {"q": q, "format": "jsonv2", "limit": limit}
     if lang:
         params["accept-language"] = lang
-    if lat is not None and lng is not None and half_span_deg:
+    if bbox:
+        west, south, east, north = bbox
+        params["viewbox"] = f"{west:.6f},{north:.6f},{east:.6f},{south:.6f}"   # left,top,right,bottom
+        params["bounded"] = 1
+    elif lat is not None and lng is not None and half_span_deg:
         d = half_span_deg
         params["viewbox"] = f"{lng - d},{lat + d},{lng + d},{lat - d}"   # left,top,right,bottom
         params["bounded"] = 1
