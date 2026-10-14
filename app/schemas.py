@@ -263,7 +263,7 @@ class LodgingOut(BaseModel):
 
 # ===== Area (러프 계획 영역) =====
 AREA_MIN_RADIUS_M = 100
-AREA_MAX_RADIUS_M = 5000
+AREA_MAX_RADIUS_M = 50000
 
 
 def _strip(v: str) -> str:
