@@ -1,18 +1,31 @@
+from typing import Literal
+
 import asyncpg
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
 
 from ..config import settings
 from ..db import get_pool
-from ..deps import COOKIE, current_user
+from ..deps import COOKIE, bearer_scheme, current_user
+from ..ratelimit import AttemptLimiter
 from ..security import DUMMY_HASH, hash_password, hash_token, new_token, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 SESSION_DAYS = 30
+
+# 로그인 실패 횟수 제한 (계정별 / IP별), 가입 시도 제한 (IP별)
+_login_fail_email = AttemptLimiter(limit=10, window_s=15 * 60)
+_login_fail_ip = AttemptLimiter(limit=30, window_s=15 * 60)
+_register_ip = AttemptLimiter(limit=10, window_s=60 * 60)
+
+
+def _ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
 
 oauth = OAuth()
 oauth.register(
@@ -33,6 +46,13 @@ class Register(BaseModel):
 class Login(BaseModel):
     email: EmailStr
     password: str = Field(max_length=128)
+
+
+class DeleteAccount(BaseModel):
+    reason: Literal[
+        "not_useful", "privacy_concern", "too_difficult", "found_alternative", "other"
+    ]
+    detail: str | None = Field(default=None, max_length=1000)
 
 
 async def create_session(user_id) -> str:
@@ -57,7 +77,11 @@ def set_session_cookie(response: Response, token: str) -> None:
 
 
 @router.post("/register", status_code=201)
-async def register(body: Register, response: Response):
+async def register(body: Register, request: Request, response: Response):
+    ip = _ip(request)
+    if _register_ip.blocked(ip):
+        raise HTTPException(429, "too_many_attempts")
+    _register_ip.add(ip)
     email = body.email.lower()
     pw_hash = await run_in_threadpool(hash_password, body.password)
     try:
@@ -73,7 +97,10 @@ async def register(body: Register, response: Response):
 
 
 @router.post("/login")
-async def login(body: Login, response: Response):
+async def login(body: Login, request: Request, response: Response):
+    email_key, ip = f"e:{body.email.lower()}", _ip(request)
+    if _login_fail_email.blocked(email_key) or _login_fail_ip.blocked(ip):
+        raise HTTPException(429, "too_many_attempts")   # 해시 검증 전에 막아 CPU 낭비도 줄인다
     row = await get_pool().fetchrow(
         "select id, email, name, password_hash from users where email = $1",
         body.email.lower(),
@@ -84,23 +111,53 @@ async def login(body: Login, response: Response):
         verify_password, row["password_hash"] if has_pw else DUMMY_HASH, body.password
     )
     if not (has_pw and verified):
+        _login_fail_email.add(email_key)
+        _login_fail_ip.add(ip)
         raise HTTPException(401, "invalid_credentials")
+    _login_fail_email.clear(email_key)
     token = await create_session(row["id"])
     set_session_cookie(response, token)
     return {"id": str(row["id"]), "email": row["email"], "name": row["name"], "token": token}
 
 
 @router.post("/logout", status_code=204)
-async def logout(request: Request, response: Response):
-    token = request.cookies.get(COOKIE)
-    if token:
-        await get_pool().execute("delete from sessions where token_hash = $1", hash_token(token))
+async def logout(
+    request: Request,
+    response: Response,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    # 웹은 쿠키, 앱/Swagger 는 Bearer 헤더. 둘 다 있으면 둘 다 폐기한다.
+    tokens = {
+        t for t in (creds.credentials.strip() if creds else None, request.cookies.get(COOKIE)) if t
+    }
+    if tokens:
+        await get_pool().execute(
+            "delete from sessions where token_hash = any($1::text[])",
+            [hash_token(t) for t in tokens],
+        )
     response.delete_cookie(COOKIE, path="/")
 
 
 @router.get("/me")
 async def me(user: dict = Depends(current_user)):
     return {"id": str(user["id"]), "email": user["email"], "name": user["name"]}
+
+
+@router.delete("/me", status_code=204)
+async def delete_me(
+    body: DeleteAccount, response: Response, user: dict = Depends(current_user)
+):
+    # 사유는 익명으로만 남긴다. (user_id·이메일은 저장하지 않음)
+    # users 삭제 시 sessions, trips(및 하위 stops/flights/lodgings/areas), place_usage 가 cascade 로 함께 지워진다.
+    detail = (body.detail or "").strip() or None
+    async with get_pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "insert into account_deletions (reason, detail) values ($1, $2)",
+                body.reason, detail,
+            )
+            await conn.execute("delete from users where id = $1", user["id"])
+    response.delete_cookie(COOKIE, path="/")
 
 
 async def _upsert_google_user(email: str, sub: str, name: str | None):

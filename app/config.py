@@ -1,4 +1,5 @@
-from typing import Literal, Self
+from typing import Literal
+from typing_extensions import Self
 from urllib.parse import urlparse
 
 from pydantic import field_validator, model_validator

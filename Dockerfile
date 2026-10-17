@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.source="https://github.com/tsungmn/travel-planner-api"
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
@@ -16,5 +18,6 @@ USER appuser
 
 EXPOSE 8000
 
-# 포트는 127.0.0.1에만 바인딩해서 노출하므로(compose 참고) 프록시 헤더를 신뢰해도 안전
+# --forwarded-allow-ips "*" : 앞단(Cloudflare Tunnel)의 프록시 헤더를 그대로 신뢰한다.
+# 따라서 이 포트(8000)는 외부에 직접 노출하지 말고 클러스터 내부 Service 로만 연결할 것.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

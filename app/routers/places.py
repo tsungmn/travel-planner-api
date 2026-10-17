@@ -62,6 +62,13 @@ async def _bump_usage(user_id, limit: int) -> bool:
     return n <= limit
 
 
+async def _refund_usage(user_id) -> None:
+    await get_pool().execute(
+        "update place_usage set n = greatest(n - 1, 0) where user_id = $1 and day = current_date and kind = 'search'",
+        user_id,
+    )
+
+
 @router.get("/search", response_model=PlaceSearchOut)
 async def search(
     q: str = Query(min_length=2, max_length=100),
@@ -91,5 +98,6 @@ async def search(
             items = await nominatim.search(q, lang, lat, lng, NEAR_SPAN_DEG if nearby else None, bbox=area)
             attribution = nominatim.ATTRIBUTION
     except ProviderError:
-        raise HTTPException(502, "upstream_error")
+        await _refund_usage(user["id"])      # 외부 서비스 오류는 사용자 한도에서 빼 준다
+        raise HTTPException(502, "upstream_error") from None
     return {"items": items, "attribution": attribution}

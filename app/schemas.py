@@ -1,12 +1,13 @@
 import re
 from datetime import date, datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from pydantic import (
     AfterValidator, BaseModel, Field, NaiveDatetime, field_validator, model_validator,
 )
+from typing_extensions import Self
 
 Lat = Annotated[float, Field(ge=-90, le=90)]
 Lng = Annotated[float, Field(ge=-180, le=180)]
@@ -32,7 +33,7 @@ def _tz(v: str) -> str:
     try:
         ZoneInfo(v)
     except Exception:
-        raise ValueError("invalid timezone")
+        raise ValueError("invalid timezone") from None
     return v
 
 
@@ -80,6 +81,9 @@ class TripOut(BaseModel):
     start_date: date
     end_date: date
     share_token: str | None
+    share_flights: bool
+    share_lodgings: bool
+    share_memos: bool
     created_at: datetime
 
 
@@ -94,6 +98,24 @@ class TripPublic(BaseModel):
     dest_lng: float | None
     start_date: date
     end_date: date
+
+
+# ===== 공유 =====
+class ShareOptions(BaseModel):
+    """보낸 항목만 바꾸고, 생략한 항목은 현재 값을 유지한다. (새 링크의 기본값은 모두 false)"""
+    flights: bool | None = None
+    lodgings: bool | None = None
+    memos: bool | None = None
+
+
+class ShareOut(BaseModel):
+    flights: bool
+    lodgings: bool
+    memos: bool
+
+
+class ShareInfo(ShareOut):
+    token: str
 
 
 # ===== Stop =====
@@ -322,6 +344,7 @@ class TripDetail(TripOut):
 
 class SharedTripOut(BaseModel):
     trip: TripPublic
+    share: ShareOut          # 이 링크에서 공개된 항목 (공개하지 않은 항목은 빈 목록/null 로 내려간다)
     flights: list[FlightOut]
     lodgings: list[LodgingOut]
     stops: list[StopOut]

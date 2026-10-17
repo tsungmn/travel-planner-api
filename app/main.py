@@ -73,7 +73,10 @@ async def healthz():
 
 @app.get("/api/readyz")     # readiness: DB 연결 확인
 async def readyz():
-    await db.get_pool().fetchval("select 1")
+    try:
+        await db.get_pool().fetchval("select 1")
+    except Exception:
+        return JSONResponse({"ok": False}, status_code=503)
     return {"ok": True}
 
 

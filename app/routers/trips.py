@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..db import get_pool
 from ..deps import current_user, require_trip
 from ..schemas import (
-    TRIP_NULLABLE, SharedTripOut, TripCreate, TripDetail, TripListItem, TripOut, TripUpdate,
+    TRIP_NULLABLE, ShareInfo, ShareOptions, SharedTripOut, TripCreate, TripDetail, TripListItem,
+    TripOut, TripUpdate,
 )
 from ..sql import clean_patch, update_sql
 
@@ -103,23 +104,37 @@ async def delete_trip(trip=Depends(require_trip)):
 
 
 # ===== 공유 =====
-# 공유 켜기: 이미 켜져 있으면 기존 토큰 유지
-@router.post("/trips/{trip_id}/share")
-async def enable_share(trip=Depends(require_trip)):
-    token = await get_pool().fetchval(
+# 공유 켜기 / 공개 범위 변경: 이미 켜져 있으면 기존 토큰을 유지하고, 보낸 항목만 바꾼다.
+# 장소와 영역은 항상 공개. 항공편·숙소·메모는 선택이며 새 링크의 기본값은 모두 비공개.
+@router.post("/trips/{trip_id}/share", response_model=ShareInfo)
+async def enable_share(body: ShareOptions | None = None, trip=Depends(require_trip)):
+    o = body or ShareOptions()
+    row = await get_pool().fetchrow(
         """update trips
               set share_token = coalesce(share_token,
-                    replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''))
+                    replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '')),
+                  share_flights  = coalesce($2::boolean, share_flights),
+                  share_lodgings = coalesce($3::boolean, share_lodgings),
+                  share_memos    = coalesce($4::boolean, share_memos)
             where id = $1
-            returning share_token""",
-        trip["id"],
+            returning share_token, share_flights, share_lodgings, share_memos""",
+        trip["id"], o.flights, o.lodgings, o.memos,
     )
-    return {"token": token}
+    return {
+        "token": row["share_token"], "flights": row["share_flights"],
+        "lodgings": row["share_lodgings"], "memos": row["share_memos"],
+    }
 
 
+# 공유 끄기: 공개 범위도 비공개로 되돌려서, 다시 켤 때는 항상 장소·영역만 공개된 상태로 시작한다.
 @router.delete("/trips/{trip_id}/share", status_code=204)
 async def disable_share(trip=Depends(require_trip)):
-    await get_pool().execute("update trips set share_token = null where id = $1", trip["id"])
+    await get_pool().execute(
+        """update trips
+              set share_token = null, share_flights = false, share_lodgings = false, share_memos = false
+            where id = $1""",
+        trip["id"],
+    )
 
 
 # 비로그인 읽기 전용 조회 (owner_id / share_token 은 응답에 포함하지 않음)
@@ -128,13 +143,27 @@ async def get_shared(token: str):
     if len(token) > 100:
         raise HTTPException(404, "not_found")
     trip = await get_pool().fetchrow(
-        """select id, title, destination, dest_lat, dest_lng, start_date, end_date
+        """select id, title, destination, dest_lat, dest_lng, start_date, end_date,
+                  share_flights, share_lodgings, share_memos
              from trips where share_token = $1""",
         token,
     )
     if not trip:
         raise HTTPException(404, "not_found")
     flights, lodgings, stops, areas = await _load_children(trip["id"])
+    # 공개하지 않은 항목은 응답 모양은 그대로 두고 비운다. (클라이언트가 필드 유무로 깨지지 않게)
+    if not trip["share_flights"]:
+        flights = []
+    if not trip["share_lodgings"]:
+        lodgings = []
+    if not trip["share_memos"]:
+        for row in (*lodgings, *stops, *areas):
+            row["memo"] = None
     return {
-        "trip": dict(trip), "flights": flights, "lodgings": lodgings, "stops": stops, "areas": areas,
+        "trip": dict(trip),
+        "share": {
+            "flights": trip["share_flights"], "lodgings": trip["share_lodgings"],
+            "memos": trip["share_memos"],
+        },
+        "flights": flights, "lodgings": lodgings, "stops": stops, "areas": areas,
     }

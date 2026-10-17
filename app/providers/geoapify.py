@@ -59,7 +59,12 @@ async def suggest(
         raise ProviderError(f"status_{r.status_code}")
 
     items: list[dict] = []
-    for f in r.json().get("features", []):
+    try:
+        data = r.json()
+        features = data.get("features", [])
+    except (ValueError, AttributeError):
+        raise ProviderError("bad_json") from None
+    for f in features:
         pr = f.get("properties") or {}
         plon, plat, pid = pr.get("lon"), pr.get("lat"), pr.get("place_id")
         if plon is None or plat is None or not pid:

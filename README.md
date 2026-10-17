@@ -8,13 +8,13 @@
 - 여행, 일자별 방문 장소, 항공편, 숙소 CRUD
 - 장소의 순서와 일차 이동을 한 번에, 전부 성공하거나 전부 취소되게 저장
 - 장소 검색: 입력 중 제안(Geoapify)과 검색 확정 시 전체 검색(Nominatim)을 하나의 엔드포인트로 제공하며, 사용자별 일일 호출 한도 적용
-- 읽기 전용 공유 링크 (로그인 없이 조회)
+- 읽기 전용 공유 링크 (로그인 없이 조회). 항공편·숙소·메모는 여행마다 공개 여부를 선택
 
 ## 기술 스택
 
 | 구분 | 사용 기술 |
 | --- | --- |
-| 언어 | 프레임워크 | Python 3.12, FastAPI, Uvicorn |
+| 언어 / 프레임워크 | Python 3.12, FastAPI, Uvicorn |
 | 데이터베이스 | PostgreSQL 17 (asyncpg, 순수 SQL 마이그레이션) |
 | 인증 | 서버 세션(토큰은 SHA-256 해시로 저장), Argon2 비밀번호 해시, Google OAuth (Authlib) |
 | 장소 검색 | Geoapify Geocoding Autocomplete, OpenStreetMap Nominatim |
@@ -85,7 +85,7 @@ Google OAuth 키가 비어 있어도 서버는 실행됩니다. 이메일 가입
 | `dev` | DB 호스트가 로컬(`localhost`, `127.0.0.1`, `::1`, `db`, `host.docker.internal`)이어야 합니다. |
 | `prod` | DB 호스트가 로컬이 아니어야 하고, `PUBLIC_URL`은 `https` 운영 도메인, `COOKIE_SECURE=true`, `DOCS_ENABLED=false`, `SESSION_SECRET` 32자 이상, Google OAuth 키와 Geoapify 키가 모두 필요합니다. |
 
-따라서 이 저장소의 `docker-compose.yml`(DB 호스트 `db`)은 개발용입니다. 운영(`prod`) 설정은 배포 환경(예: 클러스터의 ConfigMap)에서 주입하는 것을 전제로 합니다.
+따라서 이 저장소의 `docker-compose.yml`(DB 호스트 `db`)은 개발용입니다. 운영(`prod`)은 배포 환경(예: 클러스터의 ConfigMap)에서 설정을 주입하거나, 홈서버처럼 compose로 운영할 때는 `docker-compose.prod.yml`을 겹쳐 씁니다. (아래 "홈서버 첫 배포 순서")
 
 ### Google OAuth 설정
 
@@ -114,11 +114,13 @@ Google Cloud는 로그인에만 사용하며 Places API 등 결제가 필요한 
 | | POST | `/auth/login` | 이메일 로그인 (공개) |
 | | POST | `/auth/logout` | 로그아웃 |
 | | GET | `/auth/me` | 현재 사용자 |
+| | DELETE | `/auth/me` | 계정 삭제 (사유 입력, 여행 등 모든 데이터 삭제) |
 | | GET | `/auth/google`, `/auth/google/callback` | Google 로그인 (공개) |
 | 장소 검색 | GET | `/places/search` | 장소 검색 |
 | 여행 | GET, POST | `/trips` | 목록, 생성 |
 | | GET, PATCH, DELETE | `/trips/{trip_id}` | 상세(하위 데이터 포함), 수정, 삭제 |
-| 공유 | POST, DELETE | `/trips/{trip_id}/share` | 공유 링크 켜기, 끄기 |
+| 공유 | POST | `/trips/{trip_id}/share` | 공유 링크 켜기, 공개 범위 변경 (본문 `{flights, lodgings, memos}`, 보낸 항목만 변경) |
+| | DELETE | `/trips/{trip_id}/share` | 공유 링크 끄기 (공개 범위도 비공개로 초기화) |
 | | GET | `/shared/{token}` | 공유된 여행 조회 (공개) |
 | 장소 | POST | `/trips/{trip_id}/stops` | 일차의 맨 뒤에 추가 |
 | | PUT | `/trips/{trip_id}/stops/order` | 일차 이동과 순서 일괄 저장 |
@@ -157,10 +159,33 @@ Google Cloud는 로그인에만 사용하며 Places API 등 결제가 필요한 
 | 401 | `unauthorized`, `invalid_credentials` |
 | 404 | `not_found` |
 | 409 | `email_taken`, `too_many_trips`, `too_many_stops`, `too_many_flights`, `too_many_lodgings`, `too_many_areas`, `stops_out_of_range` |
-| 422 | `validation_error`, `constraint_violation`, `invalid_dates`, `day_out_of_range`, `duplicate_stop`, `unknown_stop`, `no_fields`, `<필드>_cannot_be_null` |
-| 429 | `rate_limited` |
+| 422 | `validation_error`, `constraint_violation`, `invalid_bbox`, `invalid_dates`, `day_out_of_range`, `duplicate_stop`, `unknown_stop`, `no_fields`, `<필드>_cannot_be_null` |
+| 429 | `rate_limited`, `too_many_attempts` |
 | 502 | `upstream_error` |
 | 503 | `search_not_configured` |
+
+## 공유 링크
+
+여행 소유자가 링크를 켜면 로그인 없이 `GET /api/shared/{token}`으로 읽기 전용 조회를 할 수 있습니다. 공개 범위는 여행마다 정합니다.
+
+| 항목 | 공개 여부 |
+| --- | --- |
+| 여행 제목, 목적지, 기간, 방문 장소, 영역 | 항상 공개 |
+| 항공편 (`share_flights`) | 선택. 기본 비공개 |
+| 숙소 (`share_lodgings`) | 선택. 기본 비공개 |
+| 메모 (`share_memos`) | 선택. 기본 비공개. 켜면 장소·영역·숙소의 메모가 공개되고, 끄면 `memo`가 `null`로 내려갑니다. |
+
+```bash
+POST /api/trips/{id}/share                       # 장소와 영역만 공개하는 링크 켜기
+POST /api/trips/{id}/share {"flights": true}     # 항공편도 공개 (보낸 항목만 바뀌고 토큰은 그대로)
+POST /api/trips/{id}/share {"memos": false}      # 메모 다시 비공개
+DELETE /api/trips/{id}/share                     # 링크 끄기 (토큰 폐기, 범위 초기화)
+```
+
+- 응답은 `{"token", "flights", "lodgings", "memos"}`입니다. 여행 조회(`GET /trips/{id}`)에도 `share_token`, `share_flights`, `share_lodgings`, `share_memos`가 포함됩니다.
+- 공유 조회 응답의 모양은 범위와 관계없이 같습니다. 비공개 항목은 빈 목록(`flights`, `lodgings`)이나 `memo: null`로 내려가고, `share` 필드로 어떤 항목이 공개 중인지 알 수 있습니다.
+- 링크를 껐다가 다시 켜면 새 토큰이 발급되고 항상 장소·영역만 공개된 상태로 시작합니다.
+- 007 마이그레이션 이전부터 공유 중이던 링크는 동작이 바뀌지 않도록 모두 공개로 유지됩니다. 범위를 줄이려면 `POST`로 항목을 `false`로 보냅니다.
 
 ## 장소 검색
 
@@ -177,6 +202,7 @@ Google Cloud는 로그인에만 사용하며 Places API 등 결제가 필요한 
 | `mode` | `suggest` 또는 `full` |
 | `lang` | 결과 표시 언어 `ko`, `en`, `zh`, `ja`. 그 외 값이나 생략 시 언어를 지정하지 않음 |
 | `lat`, `lng` | 여행지 중심 좌표 (여행의 `dest_lat`, `dest_lng`) |
+| `bbox` | `west,south,east,north`. 지도 화면 범위로 검색. 있으면 `lat`/`lng`/`nearby`보다 우선하며, 한 변이 1도(약 110km)를 넘으면 중심 기준으로 줄입니다. 잘못된 값은 `422 invalid_bbox` |
 | `nearby` | 기본 `true`. `lat`/`lng` 중심 약 50km 안에서만 검색. `false`이면 전 세계에서 검색 (여행지 검색 등) |
 
 응답은 최대 8건입니다.
@@ -216,6 +242,9 @@ PostgreSQL 17을 사용하며, 스키마는 `db/migrations/*.sql`을 파일명 �
 | `002_search_provider.sql` | 장소·숙소의 검색 공급자 컬럼(`provider`, `provider_place_id`), 검색 사용량 종류 `search` 추가 |
 | `003_stop_alias.sql` | 장소의 별칭(`alias`) 컬럼 |
 | `004_trip_areas.sql` | 러프 계획 영역 `trip_areas` (일차, 라벨, 중심 좌표, 반경 100~5000m, 메모) |
+| `005_area_radius_50km.sql` | 영역 반경 상한을 50km로 변경 |
+| `006_account_deletions.sql` | 계정 삭제 사유 `account_deletions` (익명) |
+| `007_share_options.sql` | 공유 공개 범위 `share_flights`, `share_lodgings`, `share_memos` (기존 공유 링크는 전부 공개로 유지) |
 
 - 여행을 삭제하면 장소, 항공편, 숙소, 영역이 함께 삭제됩니다. 여행 기간을 줄여 범위를 벗어난 영역은 삭제하지 않고 일차 미지정(`day_index = null`)으로 돌립니다. 사용자를 삭제하면 세션과 여행도 삭제됩니다.
 - 세션 토큰은 해시로만 저장하므로 DB가 유출되어도 토큰을 재사용할 수 없습니다.
@@ -231,6 +260,7 @@ docker compose run --rm api python -m app.migrate   # 컨테이너에서 (DATABA
 
 | 스크립트 | 설명 |
 | --- | --- |
+| `scripts/backup.sh` | `pg_dump`로 DB를 `backups/`에 저장하고 오래된 파일 삭제 (기본 14일, `KEEP_DAYS`로 변경) |
 | `scripts/probe_search.py <공급자>` | 장소 검색 공급자(`maptiler`, `geoapify`, `photon`, `nominatim`)별 검색 품질 비교용. 서비스 코드와 무관 |
 
 ## 컨테이너와 배포
@@ -241,15 +271,124 @@ docker compose run --rm api python -m app.migrate   # 컨테이너에서 (DATABA
 - Compose 네트워크 이름은 `travel-planner`로 고정되어 있어, 웹이나 터널 등 다른 compose 구성이 같은 네트워크에 붙을 수 있습니다.
 - 두 서비스 모두 `restart: unless-stopped`입니다.
 - 운영 환경에서는 `APP_ENV=prod`와 위 "환경 검증" 조건을 충족해야 하며, 프록시 계층에서 `/api/auth/login`, `/api/auth/register`에 요청 빈도 제한을 적용합니다.
+- 같은 서버에서 DB까지 컨테이너로 운영할 때는 `docker-compose.prod.yml`을 겹쳐 씁니다. DB 컨테이너에 `travel-db` 별칭을 붙여 prod 검증(로컬 DB 호스트 금지)을 통과하고, DB 포트는 호스트에 열지 않으며, api에 healthcheck를 추가합니다. (Compose v2.24 이상)
+  ```bash
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+  ```
+- 백업: `scripts/backup.sh`가 `pg_dump`를 `backups/`에 저장하고 오래된 파일(기본 14일)을 지웁니다. cron으로 주기 실행하고, 다른 디스크나 외부 저장소에도 복사해 두세요.
 
-업데이트 배포 순서:
+### 홈서버 첫 배포 순서
+
+같은 서버에서 API와 DB를 컨테이너로 운영하는 경우입니다. 위에서부터 차례로 실행합니다.
+
+**1. 준비물 확인** — Docker Engine과 Compose v2.24 이상(`docker compose version`), git. 재부팅 후에도 컨테이너가 올라오도록 Docker 자동 시작을 켭니다.
 
 ```bash
+sudo systemctl enable --now docker
+```
+
+**2. 코드 받기**
+
+```bash
+git clone <저장소 주소> travel-planner-api
+cd travel-planner-api
+```
+
+**3. `.env` 만들기** — 운영 값으로 채웁니다. `.env`는 커밋하지 않습니다.
+
+```bash
+cp .env.example .env
+chmod 600 .env
+openssl rand -hex 24        # POSTGRES_PASSWORD 용
+openssl rand -base64 32     # SESSION_SECRET 용
+nano .env
+```
+
+| 변수 | 운영 값 |
+| --- | --- |
+| `COMPOSE_FILE` | `docker-compose.yml:docker-compose.prod.yml` (이후 `docker compose` 명령에 `-f`를 매번 쓰지 않아도 됩니다) |
+| `APP_ENV` | `prod` |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | 새로 만든 값 |
+| `DATABASE_URL` | `postgres://<유저>:<비밀번호>@travel-db:5432/<DB 이름>` (컨테이너에서는 compose가 같은 값으로 덮어씁니다) |
+| `SESSION_SECRET` | 32자 이상 |
+| `PUBLIC_URL` | `https://` 운영 도메인 (슬래시 없이) |
+| `COOKIE_SECURE` / `DOCS_ENABLED` | `true` / `false` |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google OAuth 키 (아래 4번) |
+| `GEOAPIFY_API_KEY` | Geoapify 키 |
+| `NOMINATIM_USER_AGENT` | 연락처가 들어간 값 |
+
+**4. Google OAuth 리디렉션 URI 등록** — Google Cloud 콘솔의 OAuth 클라이언트에 `{PUBLIC_URL}/api/auth/google/callback`을 추가합니다.
+
+**5. DB 먼저 실행**
+
+```bash
+docker compose up -d --build db
+docker compose ps           # db 가 healthy 가 될 때까지 기다립니다
+```
+
+**6. 마이그레이션 적용**
+
+```bash
+docker compose run --rm api python -m app.migrate
+```
+
+**7. API 실행**
+
+```bash
+docker compose up -d --build api
+docker compose ps           # api 도 healthy 인지 확인
+docker compose logs -f api  # 오류 없이 시작됐는지 확인 (Ctrl+C 로 나오기)
+```
+
+설정 검증에 걸리면 서버가 시작되지 않고 어떤 항목이 문제인지 로그에 나옵니다.
+
+**8. 동작 확인** (서버에서)
+
+```bash
+curl -s http://127.0.0.1:8000/api/healthz    # {"ok":true}
+curl -s http://127.0.0.1:8000/api/readyz     # {"ok":true}  (DB 연결 확인)
+```
+
+**9. 외부 연결** — 리버스 프록시나 Cloudflare Tunnel이 `http://127.0.0.1:8000`(또는 같은 Docker 네트워크 `travel-planner`의 `api:8000`)으로 전달하게 설정합니다. 포트 8000은 외부에 직접 열지 않습니다. 프록시에 `/api/auth/login`, `/api/auth/register` 요청 빈도 제한도 겁니다. 웹 저장소의 `API_ORIGIN`은 이 API 주소로 지정합니다.
+
+**10. 백업 등록** — 한 번 실행해 파일이 생기는지 확인한 뒤 cron에 등록합니다.
+
+```bash
+./scripts/backup.sh
+ls -lh backups/
+crontab -e
+# 0 3 * * * /home/<유저>/travel-planner-api/scripts/backup.sh >> /home/<유저>/travel-planner-api/backups/backup.log 2>&1
+```
+
+`backups/`는 다른 디스크나 외부 저장소에도 주기적으로 복사하고, 복원이 되는지 임시 DB에서 한 번 확인해 둡니다.
+
+**11. 재부팅 확인(선택)** — `sudo reboot` 후 `docker compose ps`로 두 컨테이너가 자동으로 올라왔는지 확인합니다.
+
+### 업데이트 배포 순서
+
+```bash
+cd travel-planner-api
 git pull
+./scripts/backup.sh                              # 마이그레이션 전에 백업
 docker compose build api
 docker compose run --rm api python -m app.migrate   # 미적용 마이그레이션만 적용
 docker compose up -d api
+docker compose ps && curl -s http://127.0.0.1:8000/api/readyz
 ```
+
+마이그레이션이 실패하면 각 파일이 트랜잭션 안에서 실행되므로 해당 파일은 반영되지 않습니다. 문제가 계속되면 직전 백업으로 복원합니다.
+
+## 테스트
+
+통합 테스트는 실제 PostgreSQL이 필요하며, `TEST_DATABASE_URL`이 없으면 건너뜁니다. 테스트가 시작될 때 `public` 스키마를 지우므로 **DB 이름에 `test`가 들어 있어야만** 실행됩니다. 개발·운영 DB는 가리키지 않습니다.
+
+```bash
+docker compose exec db createdb -U app travel_test
+pip install -r requirements-dev.txt
+TEST_DATABASE_URL=postgres://app:<비밀번호>@127.0.0.1:5432/travel_test pytest
+```
+
+로그인·가입·로그아웃·횟수 제한·계정 삭제, 남의 여행 접근 차단(404), 순서 일괄 저장의 전부 성공/전부 취소, 기간 변경 규칙, 공유 링크의 켜기·끄기와 공개 범위(항공편·숙소·메모)를 검사합니다.
 
 ## 프로젝트 구조
 
@@ -261,14 +400,17 @@ app/
   deps.py          인증, 여행 소유자 검사 의존성
   security.py      비밀번호·토큰 해시
   sql.py           PATCH용 UPDATE 쿼리 생성
+  ratelimit.py     로그인·가입 시도 횟수 제한 (메모리)
   schemas.py       요청·응답 모델, 입력 검증
   migrate.py       Python 마이그레이션 실행기
   providers/       장소 검색 공급자 어댑터 (geoapify, nominatim)
   routers/         auth, places, trips, stops, flights, lodgings, areas
 db/migrations/     SQL 마이그레이션
-scripts/           probe_search.py
+scripts/           backup.sh (DB 백업), probe_search.py
+tests/             통합 테스트 (pytest, 실제 PostgreSQL 필요)
 Dockerfile
-docker-compose.yml  db + api (개발용)
+docker-compose.yml        db + api (개발용)
+docker-compose.prod.yml   운영 오버라이드 (홈서버)
 .env.example
 ```
 
@@ -280,7 +422,8 @@ docker-compose.yml  db + api (개발용)
 
 - `.env`, `data/`, `backups/`는 `.gitignore`에 포함되어 있으며 커밋하지 않습니다.
 - 가입 시 이메일 인증, 비밀번호 재설정 기능은 아직 없습니다.
-- 로그인 시도 횟수 제한은 애플리케이션에 없으므로 프록시 계층에서 적용합니다.
+- 로그인 실패는 계정별 15분에 10회, IP별 15분에 30회, 가입은 IP별 1시간에 10회로 제한하고 초과하면 `429 too_many_attempts`입니다. 메모리 기반이라 Uvicorn 워커 1개 기준이고 재시작하면 초기화되므로, 프록시 계층의 제한이 1차 방어입니다.
+- 로그아웃은 쿠키와 `Authorization: Bearer` 토큰의 서버 세션을 모두 폐기합니다.
 - 장소 검색 공급자 키는 서버에서만 사용하며 클라이언트에 노출되지 않습니다. 사용자별 일일 한도로 외부 호출량을 제한합니다.
 
 ## 데이터 출처

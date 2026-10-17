@@ -60,7 +60,13 @@ async def search(
         raise ProviderError(f"status_{r.status_code}")
 
     items: list[dict] = []
-    for x in r.json():
+    try:
+        data = r.json()
+    except ValueError:
+        raise ProviderError("bad_json") from None
+    if not isinstance(data, list):
+        raise ProviderError("bad_shape")
+    for x in data:
         try:
             plat, plon = float(x["lat"]), float(x["lon"])
         except (KeyError, TypeError, ValueError):
