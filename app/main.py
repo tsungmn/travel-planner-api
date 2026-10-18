@@ -17,6 +17,7 @@ from .routers import areas, auth, flights, lodgings, places, stops, trips
 async def lifespan(_: FastAPI):
     await db.init_pool()
     await db.get_pool().execute("delete from sessions where expires_at < now()")  # 만료 세션 정리
+    await db.get_pool().execute("delete from email_tokens where expires_at < now()")  # 만료된 메일 링크 정리
     yield
     await geoapify.close()
     await nominatim.close()

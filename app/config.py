@@ -23,6 +23,18 @@ class Settings(BaseSettings):
     geoapify_api_key: str = ""  # 비어 있으면 mode=suggest 가 503 을 반환
     nominatim_user_agent: str = "travel-planner-api/0.1"    # 연락처를 넣을 것 (공용 서버 정책)
 
+    # 메일 발송 (SMTP). 이메일 인증, 비밀번호 재설정 메일에 쓴다.
+    # dev 에서 SMTP_HOST 가 비어 있으면 메일을 보내지 않고 링크를 로그에 남긴다.
+    smtp_host: str = ""                         # 예: smtp.zoho.com (Zoho 데이터센터에 따라 .eu / .in / .com.au ...)
+    smtp_port: int = 465
+    smtp_security: Literal["ssl", "starttls"] = "ssl"   # 465 → ssl, 587 → starttls
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""                         # 보내는 주소. Zoho 는 로그인한 계정(또는 허용된 별칭)과 같아야 한다
+    smtp_from_name: str = "여행길"
+    email_verify_ttl_hours: int = 24            # 인증 링크 유효 시간
+    password_reset_ttl_minutes: int = 60        # 재설정 링크 유효 시간
+
     @field_validator("public_url")
     @classmethod
     def _strip_slash(cls, v: str) -> str:
@@ -54,6 +66,9 @@ class Settings(BaseSettings):
                 problems.append("GOOGLE_CLIENT_ID/SECRET 이 필요합니다")
             if not self.geoapify_api_key:
                 problems.append("GEOAPIFY_API_KEY 가 필요합니다")
+            # 메일이 안 나가면 가입한 사람이 영영 로그인할 수 없으므로 운영에서는 필수
+            if not (self.smtp_host and self.smtp_user and self.smtp_password and self.smtp_from):
+                problems.append("SMTP_HOST/USER/PASSWORD/FROM 이 필요합니다")
 
         if problems:
             raise ValueError(f"[APP_ENV={self.app_env}] 잘못된 설정: " + "; ".join(problems))

@@ -96,13 +96,25 @@ uvicorn app.main:app --reload --port 8000
 | `DOCS_ENABLED` | `/api/docs` 공개 여부. 운영은 `false` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google 로그인용 키 (변수 자체는 있어야 하고, 개발에서는 값이 비어도 됩니다) |
 | `GEOAPIFY_API_KEY` | 입력 중 장소 추천용 키. 비어 있으면 추천 기능만 503 |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | 이메일 인증, 비밀번호 재설정 메일을 보내는 SMTP 설정. 운영은 모두 필수, 개발은 비워도 됩니다 (아래 참고) |
+| `SMTP_FROM_NAME` | 받는 사람에게 보이는 보낸 사람 이름. 기본값 `여행길` |
+| `EMAIL_VERIFY_TTL_HOURS`, `PASSWORD_RESET_TTL_MINUTES` | 인증 링크(기본 24시간)와 재설정 링크(기본 60분)의 유효 시간 |
 | `NOMINATIM_USER_AGENT` | 전체 검색 때 보내는 이름. 연락처를 넣습니다 |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | DB 컨테이너를 만들 때 쓰는 값 |
 | `DB_BIND_IP` | DB가 문을 열 IP (5장 참고) |
 
-**개발/운영 섞임 방지:** `APP_ENV=dev`이면 DB 주소가 내 컴퓨터(`localhost`, `127.0.0.1` 등)여야만 켜집니다. 그래서 개발 중에 실수로 운영 DB에 접속하는 일이 없습니다. `APP_ENV=prod`이면 반대로 로컬 DB를 쓸 수 없고, `https` 주소, `COOKIE_SECURE=true`, `DOCS_ENABLED=false`, 32자 이상의 `SESSION_SECRET`, Google과 Geoapify 키가 모두 있어야 합니다.
+**개발/운영 섞임 방지:** `APP_ENV=dev`이면 DB 주소가 내 컴퓨터(`localhost`, `127.0.0.1` 등)여야만 켜집니다. 그래서 개발 중에 실수로 운영 DB에 접속하는 일이 없습니다. `APP_ENV=prod`이면 반대로 로컬 DB를 쓸 수 없고, `https` 주소, `COOKIE_SECURE=true`, `DOCS_ENABLED=false`, 32자 이상의 `SESSION_SECRET`, Google과 Geoapify 키, SMTP 설정이 모두 있어야 합니다. (메일이 안 나가면 가입한 사람이 로그인할 수 없기 때문입니다.)
 
 운영 환경의 값은 이 저장소가 아니라 클러스터(ConfigMap과 Vault)에서 넣습니다.
+
+**개발 중에 메일은 어떻게 확인하나요?** `SMTP_HOST`를 비워 두면 실제로 보내지 않고, 보낼 메일의 내용(인증 링크 포함)이 서버를 켠 터미널에 `WARNING` 로그로 찍힙니다. 그 링크를 브라우저에 붙여 넣으면 됩니다. 이 방식은 `APP_ENV=dev`에서만 동작하고, 운영에서는 링크를 로그에 남기지 않습니다.
+
+**이메일 인증이 하는 일**
+
+- 가입하면 로그인되지 않고 인증 메일이 갑니다. 링크를 눌러야 로그인할 수 있습니다.
+- 이 기능이 생기기 전에 가입한 계정(마이그레이션 `008`)과 Google로 로그인한 계정은 이미 인증된 것으로 봅니다.
+- 링크는 한 번만 쓸 수 있고 시간이 지나면 만료됩니다. DB에는 링크 자체가 아니라 해시만 저장합니다.
+- 비밀번호를 재설정하면 그 계정의 기존 로그인은 모두 끊깁니다.
 
 ---
 
@@ -168,12 +180,7 @@ DB의 문(5432번)은 **클러스터 서버만** 지나갈 수 있어야 합니�
 ```bash
 ip route | grep default       # "dev" 뒤에 나오는 이름이 외부와 연결된 NIC 이름입니다
 
-# 1) 5432로 들어오는 접속은 일단 모두 막고
-sudo iptables -I DOCKER-USER -i <NIC이름> -p tcp --dport 5432 -j DROP
-# 2) 클러스터 서버의 IP만 통과시킵니다 (서버가 여러 대면 IP마다 한 줄씩 실행)
-sudo iptables -I DOCKER-USER -i <NIC이름> -p tcp --dport 5432 -s <클러스터IP> -j ACCEPT
-
-sudo iptables -L DOCKER-USER -n --line-numbers     # ACCEPT 가 DROP 보다 위에 있어야 합니다
+sudo iptables -I DOCKER-USER 1 -p tcp --dport 5432 ! -s <네트워크주소>/<서브넷마스크> -j DROP
 ```
 
 - 재부팅하면 규칙이 사라지므로 저장합니다: `sudo apt install iptables-persistent` 후 `sudo netfilter-persistent save`
@@ -372,6 +379,7 @@ app/
   main.py        서버 시작점, 상태 확인 (/api/healthz, /api/readyz)
   config.py      환경 변수와 설정 검사
   db.py          DB 연결 관리
+  mailer.py      메일 보내기(SMTP)와 메일 문구
   migrate.py     마이그레이션 실행기
   routers/       기능별 주소 (auth, trips, stops, flights, lodgings, areas, places)
   providers/     장소 검색 공급자 (Geoapify, Nominatim)

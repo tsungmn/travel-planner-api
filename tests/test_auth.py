@@ -1,7 +1,12 @@
-def test_register_login_me_logout_cookie(client):
+def test_register_verify_login_me_logout_cookie(client, outbox):
     r = client.post("/api/auth/register", json={"email": "A@Example.com", "password": "password123"})
-    assert r.status_code == 201 and r.json()["email"] == "a@example.com"
-    assert client.get("/api/auth/me").json()["email"] == "a@example.com"      # 가입 쿠키로 인증됨
+    assert r.status_code == 201 and r.json() == {"email": "a@example.com"}    # 세션도 토큰도 주지 않는다
+    assert client.get("/api/auth/me").status_code == 401                      # 가입만으로는 로그인되지 않음
+    login = {"email": "a@example.com", "password": "password123"}
+    assert client.post("/api/auth/login", json=login).status_code == 403      # 인증 전에는 로그인 불가
+    assert client.post("/api/auth/verify-email", json={"token": outbox.token("a@example.com")}).status_code == 204
+    assert client.post("/api/auth/login", json=login).status_code == 200      # 인증 후 로그인 (쿠키 발급)
+    assert client.get("/api/auth/me").json()["email"] == "a@example.com"
     assert client.post("/api/auth/logout").status_code == 204
     assert client.get("/api/auth/me").status_code == 401
 

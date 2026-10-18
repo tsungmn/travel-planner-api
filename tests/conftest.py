@@ -37,14 +37,24 @@ def pytest_collection_modifyitems(config, items):
         item.add_marker(skip)
 
 
-def _run(sql: str) -> None:
+def _run(sql: str, *args) -> None:
     async def go():
         conn = await asyncpg.connect(TEST_URL)
         try:
-            await conn.execute(sql)
+            await conn.execute(sql, *args)
         finally:
             await conn.close()
     asyncio.run(go())
+
+
+def _fetch(sql: str, *args) -> list:
+    async def go():
+        conn = await asyncpg.connect(TEST_URL)
+        try:
+            return await conn.fetch(sql, *args)
+        finally:
+            await conn.close()
+    return asyncio.run(go())
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -58,16 +68,46 @@ def _schema():
     yield
 
 
+class Outbox(list):
+    """테스트 중에 '발송된' 메일을 모아 둔다. 실제 SMTP 로는 아무것도 나가지 않는다."""
+
+    def token(self, to: str, which: str = "verify-email") -> str:
+        """to 에게 온 가장 최근 메일에서 링크의 토큰을 꺼낸다."""
+        import re
+
+        mails = [m for m in self if m["to"] == to]
+        assert mails, f"{to} 에게 온 메일이 없습니다"
+        found = re.search(rf"/{which}\?token=([A-Za-z0-9_-]+)", mails[-1]["text"])
+        assert found, mails[-1]["text"]
+        return found.group(1)
+
+
 @pytest.fixture()
-def client():
+def outbox(monkeypatch):
+    from app import mailer
+
+    box = Outbox()
+
+    async def fake_send(to, subject, text, html_body):
+        box.append({"to": to, "subject": subject, "text": text, "html": html_body})
+        return True
+
+    monkeypatch.setattr(mailer, "send_email", fake_send)
+    return box
+
+
+@pytest.fixture()
+def client(outbox):
     from fastapi.testclient import TestClient
 
     from app import main
+    from app.ratelimit import AttemptLimiter
     from app.routers import auth
 
     _run("truncate users, account_deletions restart identity cascade")
-    for lim in (auth._login_fail_email, auth._login_fail_ip, auth._register_ip):
-        lim._hits.clear()
+    for lim in vars(auth).values():     # 속도 제한은 모듈 전역이라 테스트마다 비운다
+        if isinstance(lim, AttemptLimiter):
+            lim._hits.clear()
     # 쿠키 상태가 섞이지 않게 사용자는 Bearer 헤더로만 구분한다. (한 클라이언트 = 한 이벤트 루프)
     with TestClient(main.app) as c:
         yield c
@@ -78,8 +118,12 @@ class Users:
         self.c = c
 
     def signup(self, email: str, password: str = "password123") -> dict:
+        """가입하고 이메일 인증까지 끝낸 뒤 로그인해서 Bearer 헤더를 돌려준다."""
         r = self.c.post("/api/auth/register", json={"email": email, "password": password})
         assert r.status_code == 201, r.text
+        _run("update users set email_verified_at = now() where email = $1", email.lower())
+        r = self.c.post("/api/auth/login", json={"email": email, "password": password})
+        assert r.status_code == 200, r.text
         self.c.cookies.clear()
         return {"Authorization": f"Bearer {r.json()['token']}"}
 
