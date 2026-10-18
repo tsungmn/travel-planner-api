@@ -58,7 +58,7 @@ jobs:
 
       - name: Config Repo 이미지 값 업데이트 (Kustomize)
         run: |
-          cd overlays/prod/api
+          cd overlays/api
           kustomize edit set image ${{ env.dockerimage_name }}:${{ env.dockerimage_tag }}
           cat kustomization.yaml
 
