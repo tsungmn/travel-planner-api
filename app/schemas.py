@@ -342,10 +342,27 @@ class TripDetail(TripOut):
     areas: list[AreaOut]
 
 
+class SharedStopOut(BaseModel):
+    """공유 링크의 장소. 숙소를 공개하지 않을 때 숙소 장소는 hidden=True 이고 순서 외에는 모두 None."""
+    id: UUID
+    trip_id: UUID
+    day_index: int
+    sort_order: int
+    hidden: bool = False
+    name: str | None
+    alias: str | None
+    address_text: str | None
+    lat: float | None
+    lng: float | None
+    provider: str | None
+    provider_place_id: str | None
+    memo: str | None
+
+
 class SharedTripOut(BaseModel):
     trip: TripPublic
     share: ShareOut          # 이 링크에서 공개된 항목 (공개하지 않은 항목은 빈 목록/null 로 내려간다)
     flights: list[FlightOut]
     lodgings: list[LodgingOut]
-    stops: list[StopOut]
+    stops: list[SharedStopOut]
     areas: list[AreaOut]

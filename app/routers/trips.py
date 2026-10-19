@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ..db import get_pool
 from ..deps import current_user, require_trip
+from ..sharing import hide_lodging_stops
 from ..schemas import (
     TRIP_NULLABLE, ShareInfo, ShareOptions, SharedTripOut, TripCreate, TripDetail, TripListItem,
     TripOut, TripUpdate,
@@ -155,6 +156,8 @@ async def get_shared(token: str):
     if not trip["share_flights"]:
         flights = []
     if not trip["share_lodgings"]:
+        # 숙소에서 만든 장소도 같이 가려야 한다. (안 그러면 장소로 이름·주소·좌표가 새어 나간다)
+        stops = hide_lodging_stops(stops, lodgings)
         lodgings = []
     if not trip["share_memos"]:
         for row in (*lodgings, *stops, *areas):

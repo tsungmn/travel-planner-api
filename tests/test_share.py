@@ -110,3 +110,25 @@ def test_only_owner_can_change_share_options(client, users):
     t = users.trip(a)
     assert client.post(f"/api/trips/{t['id']}/share", json={"memos": True}, headers=b).status_code == 404
     assert client.post(f"/api/trips/{t['id']}/share", json={"memos": "x"}, headers=a).status_code == 422
+
+def test_lodging_stop_is_hidden_as_a_placeholder_when_lodgings_are_private(client, users):
+    a = users.signup("a@example.com")
+    t = _fill(client, users, a)
+    # 숙소에서 만든 장소(숙소와 같은 좌표) 하나를 일정에 넣는다
+    assert client.post(
+        f"/api/trips/{t['id']}/stops",
+        json={"day_index": 0, "name": "호텔", "address_text": "비밀 주소", "lat": 36.07, "lng": 120.38, "memo": "방 번호 1203"},
+        headers=a,
+    ).status_code == 201
+    url = f"/api/trips/{t['id']}/share"
+    token = client.post(url, headers=a).json()["token"]
+
+    stops = _view(client, token)["stops"]
+    assert [s["name"] for s in stops] == ["잔교", None]
+    hidden = stops[1]
+    assert hidden["hidden"] is True
+    assert (hidden["lat"], hidden["lng"], hidden["address_text"], hidden["memo"]) == (None, None, None, None)
+
+    client.post(url, json={"lodgings": True}, headers=a)               # 공개하면 그대로 보인다
+    stops = _view(client, token)["stops"]
+    assert [s["name"] for s in stops] == ["잔교", "호텔"] and not any(s["hidden"] for s in stops)
