@@ -1,4 +1,5 @@
 """통합 테스트는 실제 PostgreSQL 이 필요하다. TEST_DATABASE_URL 이 없으면 전부 건너뛴다.
+(DB 가 필요 없는 순수 함수 테스트는 모듈에 `pytestmark = pytest.mark.no_db` 를 달면 항상 돈다.)
 
     TEST_DATABASE_URL=postgres://app:<비밀번호>@127.0.0.1:5432/travel_test pytest
 
@@ -27,6 +28,21 @@ if TEST_URL:
         GOOGLE_CLIENT_SECRET="test",
         GEOAPIFY_API_KEY="",
     )
+else:
+    # DB 없이 도는 순수 함수 테스트도 app.config 를 import 할 수 있게, 필수 설정에만 더미 값을 둔다.
+    # (이미 지정된 값은 건드리지 않고, 이 값으로는 어디에도 접속하지 않는다)
+    for _k, _v in dict(
+        DATABASE_URL="postgres://x:x@localhost:5432/unused",
+        SESSION_SECRET="unit-test-secret-" + "x" * 32,
+        PUBLIC_URL="http://localhost:3000",
+        GOOGLE_CLIENT_ID="unused",
+        GOOGLE_CLIENT_SECRET="unused",
+    ).items():
+        os.environ.setdefault(_k, _v)
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "no_db: DB 없이 도는 순수 함수 테스트")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -34,7 +50,8 @@ def pytest_collection_modifyitems(config, items):
         return
     skip = pytest.mark.skip(reason="TEST_DATABASE_URL 이 없어 통합 테스트를 건너뜁니다")
     for item in items:
-        item.add_marker(skip)
+        if item.get_closest_marker("no_db") is None:
+            item.add_marker(skip)
 
 
 def _run(sql: str, *args) -> None:

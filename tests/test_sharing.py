@@ -1,4 +1,8 @@
+import pytest
+
 from app.sharing import hide_lodging_stops
+
+pytestmark = pytest.mark.no_db
 
 LODGING = {"lat": 36.07, "lng": 120.38, "provider_place_id": "kakao:hotel"}
 

@@ -366,3 +366,72 @@ class SharedTripOut(BaseModel):
     lodgings: list[LodgingOut]
     stops: list[SharedStopOut]
     areas: list[AreaOut]
+
+# ===== 일차별 날씨 =====
+# 필드 이름은 웹의 DayWeather 타입(camelCase)과 같다. 날씨가 없는 일차는 목록에서 빠진다.
+WeatherCondition = Literal[
+    "clear", "mostly-clear", "partly-cloudy", "cloudy", "fog",
+    "drizzle", "rain", "showers", "snow", "thunderstorm",
+]
+
+
+class WeatherPointOut(BaseModel):
+    date: str                                   # YYYY-MM-DD (그 일차의 날짜)
+    condition: WeatherCondition
+    label: str
+    tempMin: int
+    tempMax: int
+    precipProbability: int | None
+    uncertain: bool
+    placeName: str | None = None                # 이름 조회가 실패하면 없다
+    placeSource: Literal["auto", "user"]
+    placeChangedFromPrev: bool
+
+
+class DayWeatherOut(WeatherPointOut):
+    # 도시가 바뀐 이동일에만 있다: 전날 도시의 같은 날(date) 예보. 아침에 떠나는 도시의 날씨다.
+    # 전날 도시의 예보를 못 받았으면 null이고, 그러면 화면은 도착 도시만 보여 준다.
+    transitFrom: WeatherPointOut | None = None
+
+
+class TripWeatherOut(BaseModel):
+    days: list[DayWeatherOut]
+    attribution: str                            # 화면 어딘가에 출처 표기를 해야 한다 (Open-Meteo)
+
+
+# ===== 일차별 날씨 도시 (사용자 지정) =====
+class CityOut(BaseModel):
+    id: str
+    name: str
+    country: str | None
+    admin1: str | None
+    lat: float
+    lng: float
+
+
+class CitySearchOut(BaseModel):
+    items: list[CityOut]
+    attribution: str
+
+
+class DayCitiesSet(BaseModel):
+    """from_day ~ to_day(둘 다 0부터, to_day 포함)의 날씨 도시를 이 도시로 정한다."""
+    from_day: int = Field(ge=0, le=60)
+    to_day: int = Field(ge=0, le=60)
+    name: Annotated[str, Field(min_length=1, max_length=100)]
+    lat: Lat
+    lng: Lng
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("empty name")
+        return v
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Self:
+        if self.to_day < self.from_day:
+            raise ValueError("to_day before from_day")
+        return self

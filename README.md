@@ -228,6 +228,10 @@ PostgreSQL 이미지 버전(`postgres:17`)은 함부로 바꾸지 않습니다. 
 | `005_area_radius_50km.sql` | 영역 반경 상한을 50km로 변경 |
 | `006_account_deletions.sql` | 계정 삭제 사유 (익명) |
 | `007_share_options.sql` | 공유 링크의 공개 범위 |
+| `008_email_verification.sql` | 이메일 인증 |
+| `009_weather_cache.sql` | 날씨 예보 캐시 |
+| `010_place_names.sql` | 날씨 격자의 도시 이름 캐시 |
+| `011_trip_day_cities.sql` | 사용자가 직접 정한 일차별 날씨 도시 |
 
 규칙은 세 가지입니다.
 
@@ -381,8 +385,8 @@ app/
   db.py          DB 연결 관리
   mailer.py      메일 보내기(SMTP)와 메일 문구
   migrate.py     마이그레이션 실행기
-  routers/       기능별 주소 (auth, trips, stops, flights, lodgings, areas, places)
-  providers/     장소 검색 공급자 (Geoapify, Nominatim)
+  routers/       기능별 주소 (auth, trips, stops, flights, lodgings, areas, places, weather, day_cities)
+  providers/     외부 서비스 (장소 검색 Geoapify·Nominatim, 날씨와 도시 검색 Open-Meteo)
 db/migrations/   테이블 모양을 바꾼 기록 (번호 순서대로 적용)
 scripts/         backup.sh (홈서버에서만 사용, 이미지에는 들어가지 않습니다)
 tests/           통합 테스트
