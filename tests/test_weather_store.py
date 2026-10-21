@@ -65,3 +65,25 @@ def test_place_name_store_roundtrip():
         finally:
             await pool.close()
     asyncio.run(go())
+
+
+def test_climate_store_roundtrip_and_upsert():
+    from app.climate import PgClimateStore
+
+    normals = {"11-01": {"tmin": 1.5, "tmax": 8.4, "cold": -3.0, "hot": 12.6, "rainy": 0.3}}
+
+    async def go():
+        pool = await asyncpg.create_pool(TEST_URL, min_size=1, max_size=2)
+        try:
+            await pool.execute("truncate climate_normals")
+            store = PgClimateStore(pool)
+            assert await store.load([(501, 144)]) == {} and await store.load([]) == {}
+            await store.save((501, 144), 2025, normals, NOW)
+            await store.save((-339, 1512), 2025, normals, NOW)       # 음수 좌표
+            got = await store.load([(501, 144), (-339, 1512), (0, 0)])
+            assert set(got) == {(501, 144), (-339, 1512)} and got[(501, 144)] == (2025, normals)
+            await store.save((501, 144), 2026, {}, NOW)              # 같은 격자는 덮어쓴다
+            assert (await store.load([(501, 144)]))[(501, 144)] == (2026, {})
+        finally:
+            await pool.close()
+    asyncio.run(go())

@@ -232,6 +232,7 @@ PostgreSQL 이미지 버전(`postgres:17`)은 함부로 바꾸지 않습니다. 
 | `009_weather_cache.sql` | 날씨 예보 캐시 |
 | `010_place_names.sql` | 날씨 격자의 도시 이름 캐시 |
 | `011_trip_day_cities.sql` | 사용자가 직접 정한 일차별 날씨 도시 |
+| `012_climate_normals.sql` | 평년(과거 10년 같은 시기 평균) 캐시 |
 
 규칙은 세 가지입니다.
 

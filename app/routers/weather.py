@@ -1,16 +1,16 @@
-import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ..climate import NormalsService, PgClimateStore
 from ..db import get_pool
 from ..deps import require_trip
 from ..place_names import PgNameStore, PlaceNameService
 from ..providers import geoapify, openmeteo
 from ..schemas import TripWeatherOut
 from ..sharing import hide_lodging_stops
+from ..trip_weather import compose_trip_weather
 from ..weather import ForecastService, PgWeatherStore
-from ..weather_api import build_day_weather, lookup_points, needed_days
 from ..weather_location import resolve_day_locations
 from .trips import _load_children
 
@@ -21,16 +21,17 @@ router = APIRouter(prefix="/api", tags=["weather"])
 _cache: dict = {}
 
 
-def _services() -> tuple[ForecastService, PlaceNameService]:
+def _services() -> tuple[ForecastService, NormalsService, PlaceNameService]:
     pool = get_pool()
     if _cache.get("pool") is not pool:
         # 모듈 속성을 호출 시점에 찾도록 람다로 감싼다 (테스트에서 바꿔 끼울 수 있게)
         _cache.update(
             pool=pool,
             forecast=ForecastService(PgWeatherStore(pool), lambda lat, lng: openmeteo.fetch_daily(lat, lng)),
+            normals=NormalsService(PgClimateStore(pool), lambda lat, lng, start, end: openmeteo.fetch_history(lat, lng, start, end)),
             names=PlaceNameService(PgNameStore(pool), lambda lat, lng: geoapify.reverse_city(lat, lng)),
         )
-    return _cache["forecast"], _cache["names"]
+    return _cache["forecast"], _cache["normals"], _cache["names"]
 
 
 async def _load_overrides(trip_id, num_days: int) -> dict[int, tuple[float, float, str]]:
@@ -50,20 +51,12 @@ async def _weather_for(trip, stops: list[dict], areas: list[dict], lodgings: lis
         start_date=trip["start_date"], num_days=n, stops=stops, areas=areas, lodgings=lodgings,
         destination=dest, overrides=overrides,
     )
-    today = datetime.now(timezone.utc).date()
-    days = needed_days(trip["start_date"], n, today)
-    points = lookup_points(locations, days)
-    forecast, names = _services()
-    # 사용자가 이름을 정한 일차는 이름 조회가 필요 없다
-    name_points = [p for p in points if not any(l and l.name and (l.lat, l.lng) == p for l in locations)]
-    forecasts, place_names = await asyncio.gather(forecast.forecasts(points), names.names(name_points))
-    return {
-        "days": build_day_weather(
-            start_date=trip["start_date"], locations=locations, forecasts=forecasts,
-            names=place_names, today=today,
-        ),
-        "attribution": openmeteo.ATTRIBUTION,
-    }
+    forecast, normals, names = _services()
+    body = await compose_trip_weather(
+        start_date=trip["start_date"], locations=locations, forecast=forecast, normals=normals, names=names,
+        today=datetime.now(timezone.utc).date(),
+    )
+    return {**body, "attribution": openmeteo.ATTRIBUTION}
 
 
 @router.get("/trips/{trip_id}/weather", response_model=TripWeatherOut)
