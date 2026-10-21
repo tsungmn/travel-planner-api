@@ -82,3 +82,44 @@ async def suggest(
             "lng": plon,
         })
     return items
+
+REVERSE_URL = "https://api.geoapify.com/v1/geocode/reverse"
+# 도시로 부를 만한 단위를 작은 것부터. 시골 지점은 city 가 없고 town/village 만 있다.
+_CITY_FIELDS = ("city", "town", "village", "municipality", "suburb", "county", "state")
+
+
+def parse_city(data: object) -> str | None:
+    """역지오코딩 응답(format=json)에서 도시 이름을 꺼낸다. 없으면 None."""
+    try:
+        results = data["results"]           # type: ignore[index]
+    except (KeyError, TypeError):
+        raise ProviderError("bad_shape") from None
+    if not isinstance(results, list):
+        raise ProviderError("bad_shape")
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        for field in _CITY_FIELDS:
+            v = r.get(field)
+            if isinstance(v, str) and v.strip():
+                return v.strip()[:100]
+    return None
+
+
+async def reverse_city(lat: float, lng: float, lang: str = "ko") -> str | None:
+    """좌표가 속한 도시 이름. 도시를 못 찾으면 None, 요청이 실패하면 ProviderError."""
+    params: dict[str, str | float] = {
+        "lat": round(lat, 4), "lon": round(lng, 4), "format": "json", "lang": lang,
+        "apiKey": settings.geoapify_api_key,
+    }
+    try:
+        r = await client.get(REVERSE_URL, params=params)
+    except httpx.HTTPError:
+        raise ProviderError("network") from None     # 예외 메시지에 API 키가 든 URL이 섞이지 않도록
+    if r.status_code != 200:
+        raise ProviderError(f"status_{r.status_code}")
+    try:
+        data = r.json()
+    except ValueError:
+        raise ProviderError("bad_json") from None
+    return parse_city(data)

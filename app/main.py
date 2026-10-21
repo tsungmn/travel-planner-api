@@ -9,8 +9,9 @@ from starlette.middleware.sessions import SessionMiddleware
 import logging
 from . import db
 from .config import settings
-from .providers import geoapify, nominatim
-from .routers import areas, auth, flights, lodgings, places, stops, trips
+from .providers import geoapify, nominatim, openmeteo
+from .weather import PgWeatherStore
+from .routers import areas, auth, day_cities, flights, lodgings, places, stops, trips, weather
 
 
 @asynccontextmanager
@@ -18,9 +19,11 @@ async def lifespan(_: FastAPI):
     await db.init_pool()
     await db.get_pool().execute("delete from sessions where expires_at < now()")  # 만료 세션 정리
     await db.get_pool().execute("delete from email_tokens where expires_at < now()")  # 만료된 메일 링크 정리
+    await PgWeatherStore(db.get_pool()).prune()    # 오래 안 쓴 날씨 캐시 정리
     yield
     await geoapify.close()
     await nominatim.close()
+    await openmeteo.close()
     await db.close_pool()
 
 
@@ -62,6 +65,8 @@ app.include_router(stops.router)
 app.include_router(flights.router)
 app.include_router(lodgings.router)
 app.include_router(areas.router)
+app.include_router(weather.router)
+app.include_router(day_cities.router)
 
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
