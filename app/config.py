@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     email_verify_ttl_hours: int = 24            # 인증 링크 유효 시간
     password_reset_ttl_minutes: int = 60        # 재설정 링크 유효 시간
 
+    # 클라이언트 IP 판별 (속도 제한의 키). app/clientip.py 참고.
+    # 앞단 프록시(ingress-nginx 등)가 몇 단인지와, 그 프록시가 붙는 곳(사설 대역)을 지정한다.
+    # 프록시를 거치지 않는 환경(로컬 개발)에서는 X-Forwarded-For 를 읽지 않는다.
+    trusted_proxy_hops: int = 1
+    trusted_proxy_cidrs: str = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,fc00::/7"
+
+    # Cloudflare Turnstile (가입, 비밀번호 찾기, 인증 메일 재전송의 봇 방지).
+    # 비어 있으면 검사하지 않는다. 값을 넣는 순서는 docs 참고: 웹에 사이트 키를 먼저 배포한 뒤 이 값을 넣는다.
+    turnstile_secret_key: str = ""
+
     @field_validator("public_url")
     @classmethod
     def _strip_slash(cls, v: str) -> str:
@@ -75,4 +85,5 @@ class Settings(BaseSettings):
         return self
 
 
-settings = Settings()
+# 필수 값은 환경 변수(.env)에서 읽는다. 타입 검사기는 생성자 인자가 빠졌다고 보므로 이 줄만 예외로 둔다.
+settings = Settings()  # type: ignore[call-arg]

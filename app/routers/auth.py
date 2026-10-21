@@ -9,7 +9,8 @@ from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
 
-from .. import mailer
+from .. import mailer, turnstile
+from ..clientip import client_ip
 from ..config import settings
 from ..db import get_pool
 from ..deps import COOKIE, bearer_scheme, current_user
@@ -29,6 +30,8 @@ RESET_PASSWORD = "reset_password"
 _login_fail_email = AttemptLimiter(limit=10, window_s=15 * 60)
 _login_fail_ip = AttemptLimiter(limit=30, window_s=15 * 60)
 _register_ip = AttemptLimiter(limit=10, window_s=60 * 60)
+# 가입 요청도 이메일별로 센다. 이미 있는 이메일에는 안내 메일이 나가므로, 남의 메일함을 채우는 데 쓰지 못하게 한다.
+_register_email = AttemptLimiter(limit=5, window_s=30 * 60)
 
 # 메일을 보내는 요청 제한. 계정이 있든 없든 똑같이 센다. (제한 때문에 계정 존재 여부가 드러나지 않게)
 _resend_email = AttemptLimiter(limit=5, window_s=30 * 60)
@@ -40,7 +43,7 @@ _token_ip = AttemptLimiter(limit=20, window_s=15 * 60)
 
 
 def _ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    return client_ip(request)
 
 oauth = OAuth()
 oauth.register(
@@ -52,10 +55,15 @@ oauth.register(
 )
 
 
+# Cloudflare Turnstile 토큰. 서버에 TURNSTILE_SECRET_KEY 가 있을 때만 검사한다.
+TurnstileToken = Field(default=None, max_length=2048)
+
+
 class Register(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     name: str | None = Field(default=None, max_length=50)
+    turnstile_token: str | None = TurnstileToken
 
 
 class Login(BaseModel):
@@ -69,6 +77,7 @@ class VerifyEmail(BaseModel):
 
 class EmailOnly(BaseModel):
     email: EmailStr
+    turnstile_token: str | None = TurnstileToken
 
 
 class ResetPassword(BaseModel):
@@ -153,6 +162,19 @@ async def _resend_verification_task(email: str) -> None:
         log.exception("인증 메일 재전송 처리 실패")
 
 
+async def _notify_existing_account_task(email: str) -> None:
+    """이미 가입된 이메일로 가입을 시도하면 안내만 보낸다. 인증 링크는 보내지 않는다.
+    (누가 남의 이메일로 비밀번호를 정해 두고 미인증 계정을 선점해 둔 경우, 진짜 주인이 그 링크로 인증하면
+    선점한 사람이 아는 비밀번호로 계정이 열린다. 진짜 주인은 비밀번호 재설정으로 계정을 되찾는다.)"""
+    try:
+        subject, text, body = mailer.account_exists_email(
+            f"{settings.public_url}/login", f"{settings.public_url}/forgot-password"
+        )
+        await mailer.send_email(email, subject, text, body)
+    except Exception:
+        log.exception("기존 계정 안내 메일 처리 실패")
+
+
 async def _send_password_reset_task(email: str) -> None:
     try:
         row = await get_pool().fetchrow("select id from users where email = $1", email)
@@ -180,7 +202,13 @@ async def register(body: Register, request: Request, background: BackgroundTasks
     if _register_ip.blocked(ip):
         raise HTTPException(429, "too_many_attempts")
     _register_ip.add(ip)
+    await turnstile.require(body.turnstile_token, ip)
     email = body.email.lower()
+    key = f"r:{email}"
+    if _register_email.blocked(key):
+        raise HTTPException(429, "too_many_attempts")
+    _register_email.add(key)
+    # 해시는 이메일이 이미 있어도 똑같이 계산한다. (응답 시간으로 가입 여부가 드러나지 않게)
     pw_hash = await run_in_threadpool(hash_password, body.password)
     try:
         user_id = await get_pool().fetchval(
@@ -188,7 +216,9 @@ async def register(body: Register, request: Request, background: BackgroundTasks
             email, pw_hash, body.name,
         )
     except asyncpg.UniqueViolationError:
-        raise HTTPException(409, "email_taken")
+        # 이미 가입된 이메일이어도 응답은 같다. (가입 여부를 알려 주지 않기 위해) 주인에게만 안내 메일을 보낸다.
+        background.add_task(_notify_existing_account_task, email)
+        return {"email": email}
     # 이메일을 인증하기 전에는 로그인 세션을 만들지 않는다. 인증 메일은 응답 후에 보낸다.
     background.add_task(_send_verification, user_id, email)
     return {"email": email}
@@ -215,14 +245,18 @@ async def verify_email(body: VerifyEmail, request: Request):
 async def resend_verification(body: EmailOnly, request: Request, background: BackgroundTasks):
     # 가입된 이메일인지 알려주지 않기 위해 항상 204. 실제 조회와 발송은 응답 후에 한다.
     email = body.email.lower()
-    _limit_mail_request(_resend_email, _resend_ip, email, _ip(request))
+    ip = _ip(request)
+    _limit_mail_request(_resend_email, _resend_ip, email, ip)
+    await turnstile.require(body.turnstile_token, ip)
     background.add_task(_resend_verification_task, email)
 
 
 @router.post("/forgot-password", status_code=204)
 async def forgot_password(body: EmailOnly, request: Request, background: BackgroundTasks):
     email = body.email.lower()
-    _limit_mail_request(_forgot_email, _forgot_ip, email, _ip(request))
+    ip = _ip(request)
+    _limit_mail_request(_forgot_email, _forgot_ip, email, ip)
+    await turnstile.require(body.turnstile_token, ip)
     background.add_task(_send_password_reset_task, email)
 
 

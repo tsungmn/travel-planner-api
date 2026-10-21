@@ -97,6 +97,28 @@ def verification_email(link: str, ttl_hours: int) -> tuple[str, str, str]:
     return f"[{settings.smtp_from_name}] 이메일 인증을 완료해 주세요", text, body
 
 
+def account_exists_email(login_link: str, reset_link: str) -> tuple[str, str, str]:
+    """이미 가입된 이메일로 다시 가입을 시도했을 때. 토큰이 든 링크는 넣지 않는다.
+    (가입 화면의 응답을 계정 유무와 상관없이 같게 하려고, 이미 있는 계정에는 이 안내만 보낸다)"""
+    text = (
+        "이미 가입된 이메일이에요\n\n"
+        f"{settings.smtp_from_name}에 이 이메일로 가입된 계정이 있어요. 아래 주소에서 로그인해 주세요.\n\n"
+        f"{login_link}\n\n"
+        f"비밀번호가 기억나지 않으면 여기에서 다시 정할 수 있어요.\n\n{reset_link}\n\n"
+        "직접 가입하려던 게 아니라면 이 메일은 무시해 주세요. 계정은 바뀌지 않아요.\n"
+    )
+    e = html.escape
+    body = f"""\
+<div style="font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#1f2937">
+  <h1 style="font-size:20px;margin:0 0 16px">이미 가입된 이메일이에요</h1>
+  <p style="line-height:1.6;margin:0 0 24px">{e(settings.smtp_from_name)}에 이 이메일로 가입된 계정이 있어요. 아래 버튼에서 로그인해 주세요.</p>
+  <p style="margin:0 0 24px"><a href="{e(login_link)}" style="display:inline-block;padding:12px 24px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600">로그인하기</a></p>
+  <p style="font-size:13px;line-height:1.6;color:#6b7280;margin:0 0 8px">비밀번호가 기억나지 않으면 <a href="{e(reset_link)}">여기에서 다시 정할 수 있어요.</a></p>
+  <p style="font-size:13px;line-height:1.6;color:#6b7280;margin:16px 0 0">직접 가입하려던 게 아니라면 이 메일은 무시해 주세요. 계정은 바뀌지 않아요.</p>
+</div>"""
+    return f"[{settings.smtp_from_name}] 이미 가입된 이메일이에요", text, body
+
+
 def password_reset_email(link: str, ttl_minutes: int) -> tuple[str, str, str]:
     """(제목, 텍스트, HTML)"""
     text, body = _render(

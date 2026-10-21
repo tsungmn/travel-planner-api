@@ -13,8 +13,11 @@ def test_register_verify_login_me_logout_cookie(client, outbox):
 
 def test_duplicate_email_and_bad_password(client):
     body = {"email": "a@example.com", "password": "password123"}
-    assert client.post("/api/auth/register", json=body).status_code == 201
-    assert client.post("/api/auth/register", json=body).status_code == 409
+    first = client.post("/api/auth/register", json=body)
+    second = client.post("/api/auth/register", json=body)
+    # 가입 여부를 알려 주지 않는다: 이미 있는 이메일도 새 이메일과 똑같이 응답한다.
+    assert first.status_code == second.status_code == 201
+    assert first.json() == second.json() == {"email": "a@example.com"}
     r = client.post("/api/auth/register", json={"email": "b@example.com", "password": "short"})
     assert r.status_code == 422 and r.json()["detail"] == "validation_error"
 

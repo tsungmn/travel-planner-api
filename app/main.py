@@ -9,6 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import logging
 from . import db
 from .config import settings
+from .middleware import BodyLimitMiddleware, SecurityHeadersMiddleware
 from .providers import geoapify, nominatim, openmeteo
 from .weather import PgWeatherStore
 from .routers import areas, auth, day_cities, flights, lodgings, places, stops, trips, weather
@@ -42,6 +43,14 @@ app.add_middleware(
     https_only=settings.cookie_secure,
     same_site="lax",
     max_age=600,
+)
+# 나중에 추가한 미들웨어가 바깥쪽이다: 헤더(바깥) → 본문 크기 제한 → 세션 → 앱.
+# 이렇게 해야 413 같은 거절 응답에도 보안 헤더가 붙는다.
+app.add_middleware(BodyLimitMiddleware)
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    hsts=settings.cookie_secure,
+    csp=not settings.docs_enabled,
 )
 
 

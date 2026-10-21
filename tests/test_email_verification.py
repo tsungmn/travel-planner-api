@@ -1,4 +1,6 @@
 """이메일 인증, 인증 메일 재전송, 비밀번호 재설정, Google 연결 시의 인증 처리."""
+import re
+
 import pytest
 from conftest import _fetch, _run
 
@@ -73,11 +75,28 @@ def test_verify_endpoint_is_rate_limited_per_ip(client):
     assert codes[:20] == [400] * 20 and codes[20] == 429
 
 
-def test_duplicate_registration_keeps_one_mail(client, outbox):
+def test_duplicate_registration_sends_notice_without_a_verification_link(client, outbox):
     register(client)
-    r = client.post("/api/auth/register", json={"email": "a@example.com", "password": PW})
-    assert r.status_code == 409
-    assert len(outbox) == 1
+    r = client.post("/api/auth/register", json={"email": "a@example.com", "password": "other-password-1"})
+    assert r.status_code == 201                       # 새 이메일과 같은 응답
+    assert len(outbox) == 2
+    notice = outbox[-1]
+    assert notice["to"] == "a@example.com"
+    assert "/forgot-password" in notice["text"] and "token=" not in notice["text"]
+    assert _fetch("select count(*) as n from users")[0]["n"] == 1
+    # 첫 가입의 인증 링크는 그대로 쓸 수 있고, 두 번째 시도의 비밀번호는 반영되지 않는다.
+    match = re.search(r"/verify-email\?token=([A-Za-z0-9_-]+)", outbox[0]["text"])
+    assert match is not None
+    first_token = match.group(1)
+    assert client.post("/api/auth/verify-email", json={"token": first_token}).status_code == 204
+    assert login(client).status_code == 200
+
+
+def test_register_is_rate_limited_per_email(client, outbox):
+    body = {"email": "a@example.com", "password": PW}
+    codes = [client.post("/api/auth/register", json=body).status_code for _ in range(6)]
+    assert codes == [201] * 5 + [429]
+    assert len(outbox) == 5                           # 남의 메일함을 채우는 데 쓸 수 없다
 
 
 # ---------------------------------------------------------------- 인증 메일 재전송

@@ -18,6 +18,7 @@ USER appuser
 
 EXPOSE 8000
 
-# --forwarded-allow-ips "*" : 앞단(Cloudflare Tunnel)의 프록시 헤더를 그대로 신뢰한다.
-# 따라서 이 포트(8000)는 외부에 직접 노출하지 말고 클러스터 내부 Service 로만 연결할 것.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# 클라이언트 IP 는 uvicorn 이 아니라 앱(app/clientip.py)이 판단한다.
+# uvicorn 에 "*" 를 주면 클라이언트가 쓴 X-Forwarded-For 의 왼쪽 값을 그대로 믿게 되어
+# 요청마다 IP 를 바꿔서 속도 제한을 피할 수 있다. 그래서 uvicorn 의 프록시 헤더 처리는 끈다.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
