@@ -136,7 +136,7 @@ uvicorn app.main:app --reload --port 8000
 sudo systemctl enable --now docker
 
 # 코드 받기
-git clone https://github.com/tsungmn/travel-planner-api.git
+git clone https://github.com/tsungmnli/travel-planner-api.git
 cd travel-planner-api
 
 # .env 만들기 (값을 채웁니다)
@@ -352,7 +352,7 @@ kubectl -n travel-planner-prod rollout restart deploy/api-deployment
 
 필요한 GitHub Secrets는 `DOCKER_PASSWORD`(Docker Hub 로그인)와 `CONFIG_REPO_TOKEN`(config 저장소에 쓰기 위한 토큰)입니다.
 
-클러스터 설정, 도메인, 인증서는 [travel-planner-config](https://github.com/tsungmn/travel-planner-config) 저장소에 있습니다.
+클러스터 설정, 도메인, 인증서는 [travel-planner-config](https://github.com/tsungmnli/travel-planner-config) 저장소에 있습니다.
 
 **새 버전에 DB 변경(새 마이그레이션)이 들어 있을 때의 순서**
 

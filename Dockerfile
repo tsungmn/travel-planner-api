@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.source="https://github.com/tsungmn/travel-planner-api"
+LABEL org.opencontainers.image.source="https://github.com/tsungmnli/travel-planner-api"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
